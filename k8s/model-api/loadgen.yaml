@@ -127,7 +127,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: loadgen
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v4
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v5
           imagePullPolicy: IfNotPresent
           command: ["python", "/scripts/loadgen.py"]
           env:

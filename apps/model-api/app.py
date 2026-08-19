@@ -155,10 +155,16 @@ def reload_model(reason="manual"):
 
 
 def _poller():
-    """Фоновий опитувач: перевіряє аліас раз на RELOAD_SECONDS."""
+    """Фоновий опитувач: перевіряє аліас раз на RELOAD_SECONDS.
+
+    Спершу читає, потім спить — а не навпаки. Це перша спроба дістати модель
+    з реєстру взагалі: _startup() навмисно нічого не читає, щоб не блокувати
+    відкриття порту. Зі sleep на початку под перші 30 секунд віддавав би
+    модель, зашиту в образ, навіть коли реєстр давно доступний.
+    """
     while True:
-        time.sleep(RELOAD_SECONDS)
         reload_model(reason="poll")
+        time.sleep(RELOAD_SECONDS)
 
 # ─────────────────────────────────────────────────────────────
 # Метрики (імена — жорсткий контракт із дашбордом Grafana)
@@ -229,9 +235,24 @@ app = FastAPI(title="ML-сервіс Iris", version=APP_VERSION)
 #   • POST /reload — миттєво, щоб не чекати на занятті
 @app.on_event("startup")
 def _startup():
-    ok, msg = reload_model(reason="startup")
+    # 🔴 ТУТ НЕ МОЖЕ БУТИ reload_model(). Це коштувало одного розгортання.
+    #
+    # Раніше стояв синхронний виклик, обгорнутий у try/except — і здавалось,
+    # що цього досить. Але помилка тут не КИДАЄТЬСЯ, а БЛОКУЄ: коли MLflow ще
+    # піднімається (а при `make up` він у хвилі 2, тобто пізніше за модель),
+    # HTTP-клієнт MLflow висить на ретраях із backoff. uvicorn не завершує
+    # startup, порт 8000 не відкривається, /healthz дає connection refused,
+    # liveness probe валить под — і виглядає це як зламаний образ.
+    #
+    # Урок ширший за цей файл: try/except рятує від ВИНЯТКУ, а не від
+    # ЗАВИСАННЯ. Усе, що ходить у мережу на старті, має бути асинхронним.
+    #
+    # Тепер под піднімається миттєво на моделі, зашитій в образ
+    # (STATE["source"] == "baked"), і перемикається на реєстр, щойно MLflow
+    # відповість — перша ітерація опитувача йде одразу, без паузи.
     log(level="INFO", event="startup",
-        model_source=STATE["source"], model_version=STATE["version"], detail=msg)
+        model_source=STATE["source"], model_version=STATE["version"],
+        detail="перше читання реєстру — у фоні, старт не блокується")
     if MLFLOW_URI:
         # daemon=True: потік не заважає поду коректно завершитись
         threading.Thread(target=_poller, daemon=True).start()

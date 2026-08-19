@@ -230,7 +230,7 @@ make images
 ```
 
 Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v2`**,
-`mds06-ml-model:v4`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
+`mds06-ml-model:v5`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
 якщо його немає; реєстр визначається з ваших креденшелів
 (`aws sts get-caller-identity`), а не зашитий у Makefile.
 
@@ -433,7 +433,7 @@ def payload():
 класів (тоді хі-квадрат бачив би «дріфт» на чистих даних).
 
 **Перезбірка образу для правок генератора НЕ потрібна.** Скрипт лежить у
-ConfigMap, а не в образі, і `sklearn` у `mds06-ml-model:v4` уже є — на ньому
+ConfigMap, а не в образі, і `sklearn` у `mds06-ml-model:v5` уже є — на ньому
 працює сама модель:
 
 ```bash
@@ -793,7 +793,7 @@ apps/                    код і Dockerfile
     test_drift.py            самоперевірка логіки (лежить і в образі)
     requirements.txt         строга підмножина apps/trainer/
     Dockerfile               необовʼязковий легкий образ, ~330 MiB
-  model-api/                 сервіс моделі Теми 8 (образ mds06-ml-model:v4)
+  model-api/                 сервіс моделі Теми 8 (образ mds06-ml-model:v5)
 scripts/
   up.sh down.sh ports.sh status.sh train.sh build-images.sh
                              те, що викликають цілі Makefile

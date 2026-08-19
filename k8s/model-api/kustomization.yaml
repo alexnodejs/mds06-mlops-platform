@@ -14,4 +14,4 @@ resources:
 #   kustomize edit set image ...=...:v2  (або просто правка newTag тут)
 images:
   - name: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model
-    newTag: v4
+    newTag: v5
