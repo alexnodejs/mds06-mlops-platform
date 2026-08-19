@@ -35,8 +35,17 @@ echo
 for r in "${OLD[@]}"; do
   [[ -d "$G/$r" ]] || { echo "  ⏭  $r — уже немає"; continue; }
   SZ=$(du -sh "$G/$r" | cut -f1)
-  UNPUSHED=$(git -C "$G/$r" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  echo "  $r  ($SZ, незакомічених змін: $UNPUSHED)"
+  # ⚠️ `|| true` обовʼязковий. kuber-cluster-from-scratch — НЕ git-репозиторій
+  # (там лише тека terraform зі стейтом), git повертає 128, а через
+  # `set -o pipefail` статус усього конвеєра стає 128 навіть попри `wc` в кінці.
+  # Разом із `set -e` це мовчки вбивало скрипт саме на останньому елементі
+  # списку — тобто на тому, який найважливіше не загубити.
+  if git -C "$G/$r" rev-parse --git-dir >/dev/null 2>&1; then
+    UNPUSHED=$({ git -C "$G/$r" status --porcelain 2>/dev/null || true; } | wc -l | tr -d ' ')
+    echo "  $r  ($SZ, незакомічених змін: $UNPUSHED)"
+  else
+    echo "  $r  ($SZ, не git-репозиторій — копії на GitHub НЕМАЄ)"
+  fi
   if $DO; then
     mkdir -p "$ARCHIVE"
     mv "$G/$r" "$ARCHIVE/"
