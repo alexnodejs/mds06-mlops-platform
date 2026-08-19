@@ -1,6 +1,6 @@
 """Тренування Iris RandomForest із повним логуванням у MLflow (слайди 29-33).
 
-Та сама модель, що в Темі 8 (mds06-ml-monitoring/model/train.py): ті самі
+Та сама модель, що в Темі 8 (apps/model-api/train.py): ті самі
 load_iris, train_test_split(test_size=0.2, random_state=42, stratify=y) і
 RandomForestClassifier. Змінилося ОДНЕ: результат більше не зникає разом із
 подом — параметри, метрики, графік і сама модель ідуть у MLflow
