@@ -1,0 +1,8 @@
+# Неймспейс застосунку. Моніторинг (monitoring) і логи (logging)
+# створюють свої ArgoCD Application із CreateNamespace=true.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-demo
+  labels:
+    app.kubernetes.io/part-of: mds06-ml-monitoring

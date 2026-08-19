@@ -1,0 +1,94 @@
+# ML-сервіс на FastAPI (слайд 30): модель у образі, логи JSON у stdout.
+# Анотацій prometheus.io/scrape НЕМАЄ свідомо — скрейпимо через ServiceMonitor
+# (Prometheus Operator ігнорує ці анотації, це реліквія голого Prometheus).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-model
+  namespace: ml-demo
+  labels:
+    app: ml-model
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ml-model
+  template:
+    metadata:
+      labels:
+        app: ml-model          # цей лейбл Alloy кладе у мітку Loki `app`
+    spec:
+      securityContext:
+        # runAsNonRoot без runAsUser впаде, якщо в образі не заданий USER —
+        # тому UID задаємо явно, це працює з будь-яким образом.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ml-model
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v4
+          imagePullPolicy: IfNotPresent
+          ports:
+            # ІМ'Я порту обов'язкове: на нього посилається ServiceMonitor.
+            - name: http
+              containerPort: 8000
+          env:
+            # Без цього Python буферизує stdout блоками по 4-8 КБ і логи
+            # прилітають ривками, а останній буфер при падінні пода губиться.
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            # Версія ОБРАЗУ (не моделі!). Тримаємо поруч із newTag у
+            # kustomization.yaml — міняються разом. Спроба передати це
+            # через --build-arg не працює: у Dockerfile немає ARG APP_VERSION,
+            # і сервіс тихо лишався на дефолті "v1".
+            - name: APP_VERSION
+              value: "v4"
+            # ⭐ PROMOTE У MLFLOW == ДЕПЛОЙ.
+            # Задано MLFLOW_TRACKING_URI -> сервіс тягне модель з реєстру за
+            # аліасом champion і сам перечитує його раз на MODEL_RELOAD_SECONDS.
+            # Прибрали цю змінну -> працює на моделі, зашитій в образ (Тема 8).
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.mlflow.svc.cluster.local:80
+            - name: MLFLOW_MODEL_NAME
+              value: iris-rf
+            - name: MLFLOW_MODEL_ALIAS
+              value: champion
+            - name: MODEL_RELOAD_SECONDS
+              value: "30"
+          # sklearn імпортується ~3-5 с, тому readiness має запас 30 с,
+          # а liveness стартує пізніше, щоб не вбити под під час старту.
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          # Креденшели до MinIO — модель лежить там як артефакт MLflow.
+          # optional: true ОБОВʼЯЗКОВЕ: цей Secret створюється в namespace
+          # mlflow (див. k8s/drift-exporter/secret-example.yaml), а под живе
+          # в ml-demo — тут його НЕМА. Без optional kubelet не створює
+          # контейнер узагалі: под вічно висить у CreateContainerConfigError
+          # з "secret mlflow-credentials not found", і Тема 8 (моніторинг без
+          # MLflow) не піднімається взагалі. З optional под стартує на моделі,
+          # зашитій в образ; у логах буде model_reload_failed від MinIO.
+          # Щоб запрацював promote == деплой, скопіюйте Secret у ml-demo:
+          #   kubectl get secret mlflow-credentials -n mlflow -o yaml \
+          #     | sed 's/namespace: mlflow/namespace: ml-demo/' | kubectl apply -f -
+          envFrom:
+            - secretRef:
+                name: mlflow-credentials
+                optional: true
+
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

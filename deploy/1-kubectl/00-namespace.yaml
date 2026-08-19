@@ -1,0 +1,19 @@
+# Числовий префікс у імені файлу — НЕ прикраса.
+# `kubectl apply -f <тека>/` обробляє файли за АЛФАВІТОМ, а не за змістом.
+# Без префіксів першим ішов би configmap.yaml і apply падав би з
+#   Error from server (NotFound): namespaces "demo-kubectl" not found
+# бо namespace (n) за алфавітом після configmap (c) і deployment (d).
+# Тому: 00-namespace -> 01-configmap -> 02-deployment -> 03-service.
+#
+# Namespace — логічна «тека» всередині кластера.
+# Кожен зі способів деплою кладемо у власний namespace, щоб вони
+# не конфліктували і щоб їх було легко порівняти й видалити.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-kubectl
+  labels:
+    # Мітка, за якою потім знайдемо всі демо-namespace одразу:
+    #   kubectl get ns -l lesson=topic-6
+    lesson: topic-6
+    method: kubectl

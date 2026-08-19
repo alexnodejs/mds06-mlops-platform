@@ -1,0 +1,46 @@
+# OVERLAY prod — та сама база, інші параметри.
+# Порівняйте цей файл із overlays/dev/kustomization.yaml: різниця
+# в чотирьох значеннях. Оце і є DRY зі слайда 8.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml   # створити namespace
+  - ../../base       # і накласти на нього базу
+
+namespace: demo-prod
+namePrefix: prod-
+
+# Мітки на всі ресурси. Зручно для `kubectl get all -l env=prod`.
+# includeTemplates: true ОБОВʼЯЗКОВЕ: без нього мітка потрапляє лише в
+# metadata самого Deployment, а в spec.template.metadata.labels (тобто в
+# поди) — ні, і `kubectl get pods -l env=prod` поверне "No resources found".
+# Селектор Kustomize не чіпає (includeSelectors за замовчуванням false) —
+# і добре, бо selector у Deployment незмінний після створення.
+labels:
+  - includeTemplates: true
+    pairs:
+      env: prod
+
+replicas:
+  - name: nginx-demo
+    count: 3
+
+configMapGenerator:
+  - name: nginx-html
+    behavior: replace
+    files:
+      - index.html
+
+# ── patches — коли готового поля Kustomize не має ─────────────────────────
+# `replicas:` вище — це зручне скорочення. Але змінити, скажімо, ресурси
+# контейнера таким полем не можна. Тоді пишемо патч.
+#
+# Це "strategic merge patch": вказуємо ЛИШЕ ті поля, які змінюємо.
+# Kustomize знаходить ресурс за apiVersion+kind+name і зливає патч у нього.
+patches:
+  - path: resources-patch.yaml
+    target:
+      kind: Deployment
+      name: nginx-demo

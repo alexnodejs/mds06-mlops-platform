@@ -1,0 +1,45 @@
+# OVERLAY dev — «візьми базу і зміни ось це».
+# Зверніть увагу: жоден файл із base/ не скопійовано.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Звідки брати базу. Шлях відносний. Може бути і URL на git-репозиторій:
+#   - github.com/user/repo//deploy/3-kustomize/base?ref=main
+resources:
+  - namespace.yaml   # створити namespace
+  - ../../base       # і накласти на нього базу
+
+# Усі ресурси потраплять у цей namespace. Kustomize пропише його
+# в metadata кожного обʼєкта — руками робити не треба.
+namespace: demo-dev
+
+# Префікс до імен усіх ресурсів: nginx-demo -> dev-nginx-demo.
+# Захищає від зіткнення імен, якщо колись покладете dev і prod в один namespace.
+namePrefix: dev-
+
+# Мітки на всі ресурси. Зручно для `kubectl get all -l env=dev`.
+# includeTemplates: true ОБОВʼЯЗКОВЕ: без нього мітка потрапляє лише в
+# metadata самого Deployment, а в spec.template.metadata.labels (тобто в
+# поди) — ні, і `kubectl get pods -l env=dev` поверне "No resources found".
+# Селектор Kustomize не чіпає (includeSelectors за замовчуванням false) —
+# і добре, бо selector у Deployment незмінний після створення.
+labels:
+  - includeTemplates: true
+    pairs:
+      env: dev
+
+# Кількість реплік. Окреме поле `replicas:` простіше за патч —
+# для типових змін Kustomize має готові поля.
+replicas:
+  - name: nginx-demo # імʼя ДО додавання namePrefix
+    count: 2
+
+# Замінюємо згенерований ConfigMap своїм файлом.
+# behavior: replace — повністю замістити той, що прийшов із бази.
+# Інші варіанти: merge (додати ключі), create (створити новий).
+configMapGenerator:
+  - name: nginx-html
+    behavior: replace
+    files:
+      - index.html

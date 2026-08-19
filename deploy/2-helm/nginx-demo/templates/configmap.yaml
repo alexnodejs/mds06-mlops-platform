@@ -1,0 +1,47 @@
+{{/*
+Порівняйте цей файл із deploy/1-kubectl/01-configmap.yaml.
+Там HTML написано руками. Тут він СКЛАДАЄТЬСЯ зі значень values.yaml.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nginx-demo.fullname" . }}-html
+  labels:
+    {{- include "nginx-demo.labels" . | nindent 4 }}
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="uk">
+    <head>
+      <meta charset="utf-8">
+      <title>Спосіб {{ .Values.page.number }} — {{ .Values.page.title }}</title>
+      <style>
+        body{margin:0;height:100vh;display:grid;place-items:center;
+             font-family:system-ui,-apple-system,sans-serif;
+             background:{{ .Values.page.accent }};color:#fff;text-align:center}
+        .n{font-size:clamp(4rem,14vw,9rem);font-weight:800;line-height:.9;opacity:.35}
+        h1{font-size:clamp(1.6rem,5vw,3rem);margin:.1em 0 .3em}
+        p{font-size:clamp(1rem,2.4vw,1.35rem);opacity:.9;max-width:34ch;margin:.4em auto;line-height:1.5}
+        code{background:rgba(0,0,0,.28);padding:.15em .45em;border-radius:4px;font-size:.9em}
+        .meta{margin-top:2em;font-size:.85rem;opacity:.6}
+      </style>
+    </head>
+    <body>
+      <div>
+        <div class="n">{{ .Values.page.number }}</div>
+        <h1>{{ .Values.page.title }}</h1>
+        {{- range .Values.page.lines }}
+        <p>{{ . }}</p>
+        {{- end }}
+        {{/*
+          Ці три значення Helm підставляє САМ — їх немає у values.yaml.
+          .Release і .Chart — вбудовані обʼєкти.
+        */}}
+        <p class="meta">
+          реліз: {{ .Release.Name }} ·
+          чарт: {{ .Chart.Name }}-{{ .Chart.Version }} ·
+          реплік: {{ .Values.replicaCount }}
+        </p>
+      </div>
+    </body>
+    </html>

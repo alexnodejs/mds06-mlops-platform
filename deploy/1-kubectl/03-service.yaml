@@ -1,0 +1,27 @@
+# Service — стабільна точка входу до подів.
+# Поди смертні: у кожного своя IP, і при перестворенні вона змінюється.
+# Service дає одну незмінну адресу і балансує трафік між подами.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo
+  namespace: demo-kubectl
+spec:
+  # ClusterIP — доступ ТІЛЬКИ зсередини кластера. Дивитись будемо через
+  # `kubectl port-forward` (безкоштовно і миттєво).
+  #
+  # Чому не LoadBalancer, як у Темі 5? Бо тут таких сервісів буде чотири,
+  # і кожен створив би окремий AWS Load Balancer: ~$0.03/год кожен, 3 хвилини
+  # на створення, і всі чотири потім блокували б `terraform destroy`.
+  #
+  # Хочете справжню публічну адресу — змініть на LoadBalancer,
+  # але памʼятайте видалити перед destroy.
+  type: ClusterIP
+
+  selector:
+    app: nginx-demo # шле трафік у ВСІ поди з такою міткою
+
+  ports:
+    - port: 80 # порт самого Service
+      targetPort: 80 # порт контейнера (containerPort)
+      protocol: TCP

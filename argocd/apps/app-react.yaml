@@ -1,0 +1,43 @@
+# ArgoCD Application для цього репозиторію.
+#
+# Він лежить ТУТ, поруч із застосунком, а не в репозиторії з Terraform —
+# щоб усе, що стосується цього сервісу, було в одному місці.
+#
+# Застосувати:
+#   kubectl apply -f argocd-application.yaml
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: react-app
+  namespace: argocd # Application завжди живе в namespace ArgoCD
+  finalizers:
+    # Щоб `kubectl delete application` прибрав і створені ресурси теж,
+    # а не лишив їх сиротами в кластері.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    # Тільки тека k8s/. Теку app/ ArgoCD не читає взагалі —
+    # вихідний код його не стосується, він працює з маніфестами.
+    path: k8s/react-gitops
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo-react
+
+  syncPolicy:
+    automated:
+      prune: true # видалили з Git -> видалити з кластера
+      selfHeal: true # змінили руками -> повернути як у Git
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

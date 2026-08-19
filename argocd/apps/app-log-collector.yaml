@@ -1,0 +1,114 @@
+# Збирач логів: Grafana Alloy замість Promtail (чарт grafana/promtail 6.17.1
+# має deprecated=true — "will no longer receive updates or support").
+#
+# Компонент loki.source.kubernetes читає stdout контейнерів через Kubernetes API:
+# без privileged, без root, без hostPath на /var/log — і тому це Deployment на
+# 1 репліку, а не DaemonSet. Один под збирає логи всього ml-demo.
+# Права на pods/log уже є в дефолтних rbac.rules чарта — дописувати нічого.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: log-collector
+  annotations:
+    # Черга розгортання: CRD Prometheus мусять приїхати ДО ServiceMonitor
+    argocd.argoproj.io/sync-wave: "1"
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: alloy
+    targetRevision: 1.11.1
+    helm:
+      releaseName: alloy
+      valuesObject:
+        controller:
+          type: deployment
+          replicas: 1
+
+        alloy:
+          clustering:
+            enabled: false
+          enableReporting: false
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { memory: 256Mi }
+          configMap:
+            create: true
+            content: |
+              discovery.kubernetes "ml_pods" {
+                role = "pod"
+
+                namespaces {
+                  names = ["ml-demo"]
+                }
+              }
+
+              discovery.relabel "ml_pods" {
+                targets = discovery.kubernetes.ml_pods.targets
+
+                rule {
+                  source_labels = ["__meta_kubernetes_namespace"]
+                  target_label  = "namespace"
+                }
+
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_name"]
+                  target_label  = "pod"
+                }
+
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_container_name"]
+                  target_label  = "container"
+                }
+
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_node_name"]
+                  target_label  = "node"
+                }
+
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+                  regex         = "(.+)"
+                  target_label  = "app"
+                }
+
+                // цей rule дає мітку app="ml-model" з лейбла пода `app`
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_label_app"]
+                  regex         = "(.+)"
+                  target_label  = "app"
+                }
+
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_phase"]
+                  regex         = "Succeeded|Failed"
+                  action        = "drop"
+                }
+              }
+
+              loki.source.kubernetes "ml_pods" {
+                targets    = discovery.relabel.ml_pods.output
+                forward_to = [loki.write.loki.receiver]
+              }
+
+              // gateway у Loki вимкнено -> пишемо прямо в svc/loki:3100
+              loki.write "loki" {
+                endpoint {
+                  url = "http://loki.logging.svc.cluster.local:3100/loki/api/v1/push"
+                }
+              }
+
+        serviceMonitor:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: logging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

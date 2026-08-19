@@ -1,0 +1,41 @@
+# Обидва дашборди Grafana — з JSON-файлів, БЕЗ ручного загортання в ConfigMap.
+#
+# Раніше поруч із кожним .json лежав рукописний dashboard-configmap.yaml, у
+# якому той самий JSON був продубльований з відступом. Два джерела правди на
+# один дашборд: правиш .json — Grafana показує старе, бо читає ConfigMap.
+# 1263 рядки дубля прибрано, лишились самі .json.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+# configMapGenerator читає файл і сам робить ConfigMap із ключем = імʼя файла.
+# Саме це імʼя сайдкар покладе у /tmp/dashboards, тож для Grafana нічого не
+# змінилось.
+configMapGenerator:
+  - name: ml-model-dashboard
+    files:
+      - ml-model-dashboard.json
+  - name: drift-dashboard
+    files:
+      - drift-dashboard.json
+
+# ⭐ Мітка, за якою сайдкар grafana-sc-dashboard знаходить дашборди.
+#
+# ПАСТКА: у чарті kube-prometheus-stack labelValue = "1", а не порожній рядок.
+# Значення "true" або "" НЕ спрацює — ConfigMap проігнорується МОВЧКИ, без
+# помилки в логах. І воно мусить бути рядком у лапках: без лапок YAML дасть
+# число, а мітки Kubernetes бувають лише рядками.
+#
+# Якщо дашборд не зʼявився за ~30 с — дивіться логи САЙДКАРА, не Grafana:
+#   kubectl -n monitoring logs deploy/monitoring-grafana -c grafana-sc-dashboard
+# і обовʼязково колонку READY пода Grafana: 1/3 при статусі Running означає,
+# що сайдкари вбито по OOM і дашбордів не буде жодного.
+labels:
+  - pairs:
+      grafana_dashboard: "1"
+    includeSelectors: false
+
+# Суфікс-хеш у імені лишаємо УВІМКНЕНИМ (це дефолт): правка .json дає новий
+# ConfigMap, сайдкар бачить подію і перечитує дашборд. З disableNameSuffixHash
+# імʼя не змінюється, і оновлення дашборду доводилось би ловити руками.

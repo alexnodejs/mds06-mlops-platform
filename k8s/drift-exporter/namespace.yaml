@@ -1,0 +1,13 @@
+# Неймспейс для всього стека Теми 9: MinIO + PostgreSQL + MLflow + дріфт-експортер.
+# Модель Теми 8 лишається у своєму ml-demo, Prometheus/Grafana — у monitoring,
+# Loki — у logging. Ми до них тільки ходимо по DNS, нічого там не створюємо.
+#
+# Namespace тут потрібен НЕ для ArgoCD (у кожного Application стоїть
+# CreateNamespace=true), а для того, щоб `kubectl apply -k k8s/` працював
+# без ArgoCD — і щоб було куди покласти креденшели ДО першого синку.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+  labels:
+    app.kubernetes.io/part-of: mds06-mlflow-drift

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MDS06 · React у Kubernetes</title>
+
+    <!--
+      ⭐ КЛЮЧОВИЙ РЯДОК.
+
+      React збирається ОДИН раз і той самий бандл їде в усі середовища.
+      Але імʼя пода, ноди й namespace відомі лише в момент СТАРТУ контейнера.
+
+      Тому config.js не лежить у репозиторії — його ГЕНЕРУЄ entrypoint-скрипт
+      при кожному запуску пода (див. docker-entrypoint.d/40-runtime-config.sh).
+      Скрипт читає змінні оточення, які Kubernetes передав через downward API.
+
+      Це стандартний патерн "runtime config для SPA": один образ — багато
+      середовищ, без перезбірки.
+    -->
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

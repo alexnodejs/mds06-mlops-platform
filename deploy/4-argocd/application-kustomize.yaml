@@ -1,0 +1,71 @@
+# Application — головний обʼєкт ArgoCD.
+# Він каже: «слідкуй ось за цією текою в цьому Git-репозиторії і тримай
+# кластер таким, як там написано».
+#
+# ⚠️ ПЕРЕД ЗАСТОСУВАННЯМ замініть repoURL на свій репозиторій (рядок нижче).
+# Без цього ArgoCD покаже помилку "repository not found".
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-gitops
+  # Application ЗАВЖДИ живе в namespace самого ArgoCD, а не там,
+  # куди він деплоїть застосунок. Це найчастіша помилка новачків.
+  namespace: argocd
+
+  finalizers:
+    # Без цього рядка `kubectl delete application` видалить лише сам
+    # обʼєкт Application, а створені ним ресурси залишаться в кластері
+    # сиротами. З ним — ArgoCD спершу прибере все, що задеплоїв.
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  # Проєкт ArgoCD. `default` існує одразу після встановлення.
+  # У проді роблять окремі проєкти з обмеженнями: куди можна деплоїти, що можна.
+  project: default
+
+  # ── ЗВІДКИ брати бажаний стан ───────────────────────────────────────────
+  source:
+    # 🔴 ЗАМІНІТЬ НА СВІЙ РЕПОЗИТОРІЙ.
+    # Репозиторій має бути доступним для ArgoCD: або публічний,
+    # або доданий з креденшелами (`argocd repo add`).
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+
+    # Гілка, тег або конкретний коміт. HEAD = остання на дефолтній гілці.
+    # У проді часто пінять тег: targetRevision: v1.2.3
+    targetRevision: HEAD
+
+    # Тека всередині репозиторію. ArgoCD САМ визначить, що там Kustomize
+    # (побачить kustomization.yaml) і виконає рендер. Окремо нічого вказувати не треба.
+    path: deploy/3-kustomize/overlays/gitops
+
+  # ── КУДИ застосовувати ──────────────────────────────────────────────────
+  destination:
+    # Спеціальна адреса «той самий кластер, у якому працює ArgoCD».
+    # ArgoCD вміє керувати і зовнішніми кластерами — тоді тут був би їхній API.
+    server: https://kubernetes.default.svc
+    namespace: demo-gitops
+
+  # ── ЯК синхронізувати ───────────────────────────────────────────────────
+  syncPolicy:
+    automated:
+      # prune: видаляти з кластера те, що прибрали з Git.
+      # Без нього видалений з Git ресурс залишиться жити в кластері.
+      prune: true
+
+      # ⭐ selfHeal — те, за що ArgoCD і люблять (слайд 8: "self-heal").
+      # Хтось змінив ресурс руками через kubectl? ArgoCD побачить
+      # розбіжність із Git і поверне як було. Git — джерело істини.
+      selfHeal: true
+
+    syncOptions:
+      # Створити namespace, якщо його немає. У нас namespace оголошено
+      # в overlay, тож це підстраховка.
+      - CreateNamespace=true
+
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

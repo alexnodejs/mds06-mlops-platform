@@ -1,0 +1,131 @@
+# ══════════════════════════════════════════════════════════════════════════
+# ТЕМА 10 — ТРЕНУВАННЯ ЯК ЧАСТИНА CI (слайди 29-32)
+#
+# На слайдах цей крок показано на GitLab CI. Ми робимо те саме на GitHub
+# Actions — ідея й механіка ідентичні, змінюється лише синтаксис YAML.
+# Відповідність рядок-у-рядок з GitLab-версією є в docs/10-automated-training.md.
+#
+# ЩО ТУТ ВІДБУВАЄТЬСЯ:
+#   push у main  ->  GitHub видає job підписаний JWT
+#                ->  AWS перевіряє підпис і видає тимчасові креденшели
+#                ->  job запускає Step Functions і чекає результату
+#                ->  червоний чи зелений CI = результат тренування
+#
+# ⚠️ У цьому файлі НЕМАЄ жодного ключа AWS — і не має бути. Уся автентифікація
+# через OIDC (слайд 32). Якщо десь бачите AWS_SECRET_ACCESS_KEY у секретах
+# репозиторію — це і є те, від чого ми тут ідемо.
+# ══════════════════════════════════════════════════════════════════════════
+name: Тренування моделі
+
+on:
+  push:
+    branches: [main]
+    # Тренуємо лише тоді, коли змінилось те, що впливає на модель. Інакше
+    # правка README запускала б повний цикл тренування — і ви б швидко
+    # навчились ігнорувати червоні білди.
+    paths:
+      - 'apps/trainer/**'
+      - 'lambdas/**'
+      - 'terraform/training-pipeline/**'
+      - '.github/workflows/train.yml'
+
+  # Ручний запуск із UI GitHub — саме ним зручно показувати на занятті:
+  # можна підставити свідомо гірші гіперпараметри і побачити, як quality gate
+  # ВІДХИЛЯЄ модель, а прод лишається на старій версії.
+  workflow_dispatch:
+    inputs:
+      n_estimators:
+        description: 'Скільки дерев (через кому)'
+        default: '50,100,200'
+      max_depth:
+        description: 'Глибина (через кому; none = без обмеження)'
+        default: '2,none'
+      experiment:
+        description: 'Імʼя експерименту в MLflow'
+        default: 'iris-rf'
+
+# ⭐ Без id-token: write GitHub не видасть OIDC-токен, і крок автентифікації
+# впаде з "Not authorized" — найчастіша помилка при налаштуванні OIDC.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  # Значення підставляє `make init`. Це не секрети: ARN ролі й машини
+  # марні без підписаного токена від GitHub.
+  AWS_ROLE_ARN: arn:aws:iam::832828869208:role/mds06-github-actions
+  STATE_MACHINE_ARN: arn:aws:states:eu-central-1:832828869208:stateMachine:mds06-train
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Обмін JWT на тимчасові креденшели AWS
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: gh-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Хто ми тепер в AWS
+        # Друкує assumed-role ARN. Саме цей вивід показують на слайді 32 як
+        # доказ, що ключів немає, а доступ є.
+        run: aws sts get-caller-identity
+
+      - name: Запустити пайплайн і дочекатись результату
+        run: |
+          set -euo pipefail
+
+          # Ім'я виконання мусить бути унікальним у межах 90 днів.
+          # run_attempt обовʼязковий: без нього повторний запуск того самого
+          # білда впаде з ExecutionAlreadyExists.
+          NAME="gh-${{ github.run_id }}-${{ github.run_attempt }}"
+
+          INPUT=$(jq -nc \
+            --arg sha    "${{ github.sha }}" \
+            --arg ref    "${{ github.ref_name }}" \
+            --arg url    "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg n      "${{ inputs.n_estimators || '50,100,200' }}" \
+            --arg d      "${{ inputs.max_depth   || '2,none' }}" \
+            --arg exp    "${{ inputs.experiment  || 'iris-rf' }}" \
+            '{commit_sha:$sha, ref:$ref, run_url:$url,
+              n_estimators:$n, max_depth:$d, experiment:$exp}')
+          echo "вхід: $INPUT"
+
+          ARN=$(aws stepfunctions start-execution \
+            --state-machine-arn "$STATE_MACHINE_ARN" \
+            --name "$NAME" --input "$INPUT" \
+            --query executionArn --output text)
+          echo "виконання: $ARN"
+          echo "граф: https://$AWS_REGION.console.aws.amazon.com/states/home?region=$AWS_REGION#/v2/executions/details/$ARN"
+
+          # `aws stepfunctions wait` НЕ ІСНУЄ — цикл доводиться писати руками.
+          while true; do
+            STATUS=$(aws stepfunctions describe-execution --execution-arn "$ARN" \
+                     --query status --output text)
+            case "$STATUS" in
+              RUNNING|PENDING_REDRIVE) echo "  ... $STATUS"; sleep 10 ;;
+              SUCCEEDED) break ;;
+              *) echo "::error::пайплайн завершився зі станом $STATUS"
+                 aws stepfunctions describe-execution --execution-arn "$ARN" \
+                   --query '[error,cause]' --output text
+                 exit 1 ;;
+            esac
+          done
+
+          # Підсумок у вкладку Summary — щоб не лізти в консоль AWS за одним числом.
+          OUT=$(aws stepfunctions describe-execution --execution-arn "$ARN" \
+                --query output --output text)
+          {
+            echo "### Результат тренування"
+            echo ""
+            echo '```json'
+            echo "$OUT" | jq '.summary'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # ⚠️ ВІДХИЛЕНА МОДЕЛЬ — ЦЕ ЗЕЛЕНИЙ БІЛД, а не червоний.
+          # Quality gate спрацював як мав: нова модель гірша, прод не змінили.
+          # Червоним має бути ЗЛАМАНИЙ пайплайн, а не робоче рішення "не беремо".
+          echo "$OUT" | jq -r '.summary.status + ": " + (.summary.reason // "")'

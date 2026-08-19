@@ -1,0 +1,154 @@
+# Генератор навантаження: без нього ВСІ шість панелей слайда 37 порожні.
+# Той самий образ ml-model:v4, лише інший command — образ уже витягнутий на
+# ноду, тож под стартує миттєво і другий ECR-репозиторій не потрібен.
+# Тег ТУТ мусить збігатися з newTag у kustomization.yaml: kustomize його все
+# одно перепише, але `kubectl apply -f k8s/loadgen.yaml` (Тема 9) йде повз
+# kustomize і відкотив би генератор на старий образ — ArgoCD потім повернув би
+# новий, і под перезапустився б двічі на рівному місці.
+# HTTP — ЧИСТИЙ стдліб (urllib): у python:3.13-slim НЕМАЄ curl (перевірено);
+# sklearn береться з самого образу — він там уже є під модель.
+#
+# Дефолт replicas: 0 — щоб стек не гнав трафік цілодобово.
+# Вмикати наживо:  kubectl -n ml-demo scale deploy/load-generator --replicas=1
+# Вимикати:        kubectl -n ml-demo scale deploy/load-generator --replicas=0
+# (в argocd/app-ml-model.yaml є ignoreDifferences на /spec/replicas, інакше
+#  selfHeal за хвилину поверне 0 і демо зламається)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadgen-script
+  namespace: ml-demo
+data:
+  loadgen.py: |
+    """Генератор запитів до ml-model.
+
+    ⚠️ ВАЖЛИВО ПРО РОЗПОДІЛ ДАНИХ (від цього залежить Тема 9).
+    Раніше тут були зашиті числами «центроїди» трьох класів. Виглядало
+    невинно, але KS-тест у дріфт-експортері порівнює наш трафік з еталоном
+    (train-split Iris) — і бачив РІЗНИЦЮ на чистих даних.
+    Заміряно на 12 вікнах по 2850 записів: petal_width давав p < 0.01
+    в 11 випадках із 12, тобто дашборд дріфту був червоний ЗАВЖДИ, ще до
+    будь-якої симуляції.
+
+    Тому тепер ми семплимо РЕАЛЬНІ рядки Iris і додаємо джитер. sklearn у
+    цьому образі вже є (на ньому працює сама модель), тягнути нічого не треба.
+
+    JITTER=0.25 обрано заміром, не на око:
+      - KS: 0 хибних тривог із 12 вікон (проти 11/12 у старого варіанта)
+      - розкид впевненості: 21.5% запитів нижче 0.9 (у старого 22.2%),
+        тобто панель «Confidence distribution» Теми 8 лишається інформативною
+    """
+    import json, os, random, time, urllib.error, urllib.request
+    from sklearn.datasets import load_iris
+    from sklearn.model_selection import train_test_split
+
+    URL = os.getenv("TARGET_URL", "http://ml-model.ml-demo.svc.cluster.local/predict")
+    RPS = float(os.getenv("RPS", "5"))
+    JITTER = float(os.getenv("JITTER", "0.25"))
+
+    # ⭐ РУЧКА ДЛЯ ДЕМО ДРІФТУ (Тема 9).
+    # 0.0 = нормальний трафік. Підняли до 0.8 — усі ознаки зсуваються, і
+    # KS-тест це бачить: p_value падає, drift_detected стрибає з 0 в 1.
+    #   kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0.8
+    # Повернути: DRIFT_SHIFT=0.0
+    DRIFT_SHIFT = float(os.getenv("DRIFT_SHIFT", "0.0"))
+
+    FIELDS = ("sepal_length", "sepal_width", "petal_length", "petal_width")
+
+    # Той САМИЙ split, що використовує модель і еталон дріфт-експортера
+    # (random_state=42, test_size=0.2, stratify) — інакше порівнювати немає сенсу.
+    _d = load_iris()
+    X_TRAIN, _, _, _ = train_test_split(
+        _d.data, _d.target, test_size=0.2, random_state=42, stratify=_d.target)
+
+    def payload():
+        r = random.random()
+        # 5% навмисно битих -> pydantic віддає 422 -> панель «Помилки» не нуль
+        if r < 0.05:
+            return {"sepal_length": 999, "sepal_width": "abc",
+                    "petal_length": None, "petal_width": -1}
+        row = X_TRAIN[random.randrange(len(X_TRAIN))]
+        return {f: round(max(0.1, row[i] + random.gauss(DRIFT_SHIFT, JITTER)), 2)
+                for i, f in enumerate(FIELDS)}
+
+    if os.getenv("SELFTEST"):  # python loadgen.py -> перевірка без мережі
+        from scipy.stats import ks_2samp
+        sample = [payload() for _ in range(3000)]
+        bad = sum(1 for p in sample if p["sepal_width"] == "abc")
+        assert 100 < bad < 300, f"частка битих payload поїхала: {bad}/3000"
+        good = [p for p in sample if p["sepal_width"] != "abc"]
+        print("selftest: битих", bad, "із 3000")
+        for i, f in enumerate(FIELDS):
+            pv = ks_2samp(X_TRAIN[:, i], [g[f] for g in good]).pvalue
+            flag = "ДРІФТ" if pv < 0.01 else "ok"
+            print(f"  {f:14} p={pv:.3e}  {flag}")
+        raise SystemExit
+
+    # ── Головний цикл ────────────────────────────────────────────────────
+    # Deployment очікує, що процес живе постійно. Якщо скрипт завершиться —
+    # навіть з кодом 0 — kubelet перезапустить контейнер, і под піде в
+    # CrashLoopBackOff з причиною "Completed". Саме так і сталося, коли цей
+    # цикл випадково зник під час правки.
+    while True:
+        req = urllib.request.Request(
+            URL, data=json.dumps(payload()).encode(),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()
+        except urllib.error.HTTPError as e:
+            e.read()  # 422/5xx — очікувано, метрику вже порахував сам сервіс
+        except Exception as e:
+            print("помилка запиту:", e, flush=True)
+        time.sleep(1.0 / RPS)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: ml-demo
+  labels:
+    app: load-generator
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v4
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/scripts/loadgen.py"]
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TARGET_URL
+              value: http://ml-model.ml-demo.svc.cluster.local/predict
+            - name: RPS
+              value: "5"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests: { cpu: 50m,  memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: script
+          configMap:
+            name: loadgen-script

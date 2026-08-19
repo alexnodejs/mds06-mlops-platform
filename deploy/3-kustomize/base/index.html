@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <title>Kustomize — база</title>
+  <style>
+    body{margin:0;height:100vh;display:grid;place-items:center;
+         font-family:system-ui,-apple-system,sans-serif;
+         background:#546E7A;color:#fff;text-align:center}
+    .n{font-size:clamp(4rem,14vw,9rem);font-weight:800;line-height:.9;opacity:.35}
+    h1{font-size:clamp(1.6rem,5vw,3rem);margin:.1em 0 .3em}
+    p{font-size:clamp(1rem,2.4vw,1.35rem);opacity:.9;max-width:34ch;margin:.4em auto;line-height:1.5}
+    code{background:rgba(0,0,0,.28);padding:.15em .45em;border-radius:4px;font-size:.9em}
+  </style>
+</head>
+<body>
+  <div>
+    <div class="n">3</div>
+    <h1>Kustomize — база</h1>
+    <p>Якщо ви бачите цю сіру сторінку — застосовано <strong>base</strong>,
+       без жодного overlay.</p>
+    <p>Зазвичай base не деплоять напряму. Спробуйте
+       <code>overlays/dev</code> або <code>overlays/prod</code>.</p>
+  </div>
+</body>
+</html>

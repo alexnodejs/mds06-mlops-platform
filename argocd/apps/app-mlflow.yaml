@@ -1,0 +1,251 @@
+# MLflow tracking server + UI — основний інструмент трекінгу цієї теми
+# (слайди 10, 13), розгорнутий Helm-чартом із репозиторію community-charts
+# декларативно через ArgoCD (слайди 17, 24).
+#
+# ХВИЛЯ 2, А НЕ 0 — і це не формальність: MLflow на старті прогонить міграції
+# схеми в PostgreSQL і одразу перевірить bucket у MinIO. Обидва мусять уже
+# працювати. Але ХВИЛЯ — ЛИШЕ ПЕРШИЙ ПОЯС; другий, незалежний, нижче:
+# backendStore.databaseConnectionCheck: true додає init-контейнер dbchecker,
+# який у циклі з фібоначчі-бекофом чекає, поки PGHOST:PGPORT почне СЛУХАТИ.
+# Це важливо, бо «Application Healthy» у ArgoCD ≠ «Postgres приймає
+# з'єднання»: под StatefulSet стає Ready за readinessProbe чарта, а між
+# Ready і готовністю приймати запити від MLflow ще є секунди на recovery.
+# Тобто навіть якщо хтось застосує всі Application одночасно і хвилі не
+# спрацюють — MLflow не впаде на міграціях, а почекає в Init.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://community-charts.github.io/helm-charts
+    chart: mlflow
+    targetRevision: 1.11.4 # appVersion 3.15.1
+    helm:
+      # releaseName МУСИТЬ бути "mlflow": від Release.Name залежить ім'я
+      # сервісу, а MLFLOW_TRACKING_URI уже прибитий до
+      # mlflow.mlflow.svc.cluster.local:80.
+      releaseName: mlflow
+
+      # 🔴 БЕЗ ЦИХ ДВОХ РЯДКІВ ServiceMonitor НЕ З'ЯВИТЬСЯ ВЗАГАЛІ, а ArgoCD
+      # при цьому напише Synced/Healthy. Шаблон servicemonitor.yaml чарта
+      # загорнутий у {{ if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }},
+      # а repo-server ArgoCD рендерить helm template БЕЗ доступу до кластера,
+      # тож APIVersions містить лише вбудований набір і умова завжди false.
+      # ПЕРЕВІРЕНО локально: без --api-versions рендериться 0 ServiceMonitor,
+      # з ним — 1. Потрібні ОБИДВА рядки: Helm звіряє точний рядок, тож
+      # group/version і group/version/Kind перелічуються окремо.
+      apiVersions:
+        - monitoring.coreos.com/v1
+        - monitoring.coreos.com/v1/ServiceMonitor
+
+      valuesObject:
+        replicaCount: 1
+        image:
+          # Пінимо явно, хоч чарт і підставив би appVersion: версія видна
+          # прямо тут, а мутабельних тегів ми не тримаємо (граблі №6).
+          tag: "3.15.1"
+
+        # Recreate замість дефолтного RollingUpdate {maxSurge: 100%}:
+        # у кластері рівно 34 слоти подів і всі зайняті, транзієнтний
+        # другий под MLflow став би Pending і заблокував редеплой.
+        strategy:
+          type: Recreate
+
+        # ── BACKEND STORE: PostgreSQL (слайд 22) ──────────────────────────
+        backendStore:
+          # Виносить міграції схеми в ОКРЕМИЙ init-контейнер
+          # mlflow-db-migration -> якщо вони впадуть, це видно одразу
+          # і не змішано з логами сервера.
+          databaseMigration: true
+          # Другий пояс до sync-wave: init-контейнер dbchecker (busybox)
+          # чекає через nc, поки PGHOST:PGPORT почне слухати.
+          databaseConnectionCheck: true
+          postgres:
+            enabled: true
+            host: postgres.mlflow.svc.cluster.local
+            port: 5432
+            database: mlflow
+            user: mlflow # дублює POSTGRES_USER; чарт кладе host/port/db у ConfigMap
+          # Креденшели БД беремо з того самого об'єкта, що й усе інше
+          # (слайд 23). Чарт зробить із них змінні оточення для libpq, а сам
+          # --backend-store-uri=postgresql:// піде БЕЗ креденшелів: libpq
+          # збере підключення з PG*-змінних, тож пароль не світиться
+          # ні в args пода, ні в `kubectl describe pod`.
+          # «Example-ключ» нижче = ім'я ключа з k8s/secret-example.yaml.
+          existingDatabaseSecret: # Example-ключі
+            name: mlflow-credentials
+            usernameKey: POSTGRES_USER # Example-ключ -> env PGUSER
+            passwordKey: POSTGRES_PASSWORD # Example-ключ -> env PGPASSWORD
+
+        # 🔴 ОБОВ'ЯЗКОВО false — ЦЕ НЕ ОПЦІЯ, А ВИМОГА. Chart.yaml цього
+        # чарта тягне залежність bitnami/postgresql 18.8.6, а
+        # charts.bitnami.com/bitnami/postgresql-18.8.6.tgz віддає HTTP 403
+        # (перевірено curl). Тобто з enabled: true синк просто впаде —
+        # або, ще гірше, з кешованого чарта підніметься под на мутабельному
+        # bitnami/postgresql:latest. Деталі — в argocd/app-postgres.yaml.
+        postgresql:
+          enabled: false
+        mysql:
+          enabled: false
+
+        # ── ARTIFACT STORE: MinIO по протоколу S3 (слайд 21) ──────────────
+        artifactRoot:
+          # false = КЛІЄНТ вантажить артефакти в MinIO НАПРЯМУ
+          # (--default-artifact-root=s3://mlflow-artifacts/). Саме тому
+          # тренувальному Job потрібні і MLFLOW_S3_ENDPOINT_URL, і AWS_*.
+          # true додало б --serve-artifacts: клієнт ходив би ЛИШЕ в MLflow
+          # (схема mlflow-artifacts:/) і йому вистачило б одного
+          # MLFLOW_TRACKING_URI — зручно для запуску з ноутбука без другого
+          # port-forward, але весь трафік артефактів пішов би через один под.
+          proxiedArtifactStorage: false
+          s3:
+            enabled: true
+            bucket: mlflow-artifacts # той самий, що створює post-install Job MinIO
+            existingSecret:
+              name: mlflow-credentials
+              keyOfAccessKeyId: AWS_ACCESS_KEY_ID # Example-ключ
+              keyOfSecretAccessKey: AWS_SECRET_ACCESS_KEY # Example-ключ
+
+        # Ці дві змінні чарт підставляє САМ лише коли minio.enabled=true
+        # (сабчарт). У нас MinIO — окремий Application, тож задаємо руками.
+        # Тримаємо їх тут, а не в креденшелах, НАВМИСНО: вони не таємні і
+        # видні в `kubectl describe pod` — студент бачить, куди ходить сервер.
+        extraEnvVars:
+          MLFLOW_S3_ENDPOINT_URL: http://minio.mlflow.svc.cluster.local:9000
+          # boto3 без регіону кидає NoRegionError на кастомному endpoint.
+          # MinIO значення ігнорує — воно потрібне лише для підпису SigV4.
+          AWS_DEFAULT_REGION: eu-central-1
+
+        # 256Mi requests / 768Mi limits — і 768Mi тут НЕ «на око».
+        # init-контейнер mlflow-db-migration успадковує ЦІ Ж resources, а він
+        # піднімає весь MLflow + SQLAlchemy: із лімітом ~256Mi його тихо вбиває
+        # OOMKilled, под застрягає в Init:CrashLoopBackOff, а ArgoCD показує
+        # Progressing, НЕ Degraded (граблі №1: дивимось READY, не STATUS).
+        # Нижня безпечна межа — ~384Mi; сам сервер з відкритим UI тримає
+        # ~300-400 MiB RSS, тому 768Mi дає запас на порівняння запусків.
+        # 🔴 ВИПРАВЛЕНО ЗА ФАКТОМ. Оцінка «768Mi дає запас» була НЕВІРНА:
+        # под пішов у CrashLoopBackOff з OOMKilled (exit 137) шість разів
+        # підряд. Причому в логах усе виглядало добре — «Uvicorn running on
+        # http://0.0.0.0:5000», «Started parent process» — і аж потім смерть.
+        #
+        # Причина: MLflow 3.x за замовчуванням форкає 4 воркери uvicorn, і
+        # КОЖЕН тягне повний Python-процес зі SQLAlchemy й boto3. Оцінка
+        # «300-400 MiB RSS» справедлива для ОДНОГО воркера, не для чотирьох.
+        #
+        # Лікуємо з двох боків:
+        #   1) --workers 2 нижче (для навчального стенду 2 достатньо з головою)
+        #   2) ліміт 2Gi — з трьома нодами (9.65 GiB) запас є
+        resources:
+          requests: { cpu: 100m, memory: 512Mi }
+          limits: { memory: 2Gi }
+
+        # Кількість воркерів gunicorn. Дефолт чарта — 4, і саме вони з'їдали
+        # памʼять. Чарт перетворює camelCase на kebab-case, тобто цей ключ
+        # рендериться у флаг `--workers 2` команди `mlflow server`.
+        extraArgs:
+          workers: "2"
+
+          # 🔴 БЕЗ ЦЬОГО КЛІЄНТИ ВСЕРЕДИНІ КЛАСТЕРА ОТРИМУЮТЬ 403.
+          #
+          # MLflow 3.x додав захист від DNS rebinding: middleware звіряє
+          # заголовок Host і за замовчуванням пускає лише localhost та
+          # приватні IP (10.*, 192.168.*, 172.16-31.*).
+          #
+          # Наш тренувальний Job звертається за DNS-іменем
+          # mlflow.mlflow.svc.cluster.local — це НЕ IP і НЕ localhost, тож
+          # сервер відповідає 403 з тілом
+          #   "Invalid Host header - possible DNS rebinding attack detected"
+          # Найпідступніше: у логах СЕРВЕРА при цьому нічого підозрілого,
+          # помилку видно лише на боці клієнта.
+          #
+          # Перелічуємо конкретні імена, а не '*': вайлдкард тут теж працює,
+          # але вчити студентів вимикати захист одним символом — погана звичка.
+          allowedHosts: "mlflow.mlflow.svc.cluster.local,mlflow.mlflow.svc.cluster.local:80,mlflow.mlflow,mlflow,localhost,localhost:5001,127.0.0.1"
+
+        # auth вимкнено: на занятті UI відкривається через port-forward,
+        # а окремі логіни лише крадуть час. Побічний ефект: на КОЖНОМУ синку
+        # ArgoCD запускає PreSync-хук і ключ підпису cookie Flask отримує нове
+        # значення (шаблон чарта — {{ if not (lookup ...) }}, а lookup під
+        # helm template завжди повертає порожньо, тож умова завжди істинна).
+        # При auth.enabled: false цей ключ нікуди не використовується —
+        # ІГНОРУЄМО, нічого робити не треба.
+        auth:
+          enabled: false
+        # Телеметрія MLflow (за замовчуванням уже вимкнена) — фіксуємо явно.
+        telemetry:
+          enabled: false
+
+        serviceMonitor:
+          enabled: true
+          # 🔴 ОБОВ'ЯЗКОВО true. При false чарт рендерить
+          # `targetPort: http` — а http це ім'я порту SERVICE, тоді як
+          # контейнерний порт називається `mlflow` (service.containerPortName).
+          # targetPort шукає ім'я порту ПОДА, не сервісу, тож таргет просто
+          # не з'явиться. З true рендериться `port: http` — ІМ'Я порту
+          # Service, і все збігається.
+          useServicePort: true
+          # Дефолт чарта — monitoring, тобто ресурс поїхав би в ЧУЖИЙ
+          # namespace. Тримаємо його поруч із сервісом, який він описує.
+          namespace: mlflow
+          # Дефолт /metrics ламає скрейп: коли serviceMonitor.enabled: true,
+          # чарт додає серверу флаг --expose-prometheus=/mlflow/metrics
+          # (перевірено в templates/deployment.yaml). Розбіжність дає
+          # таргет UP зі 404 і жодної метрики.
+          telemetryPath: /mlflow/metrics
+          # Дефолт чарта — release: prometheus, а наш kube-prometheus-stack
+          # має releaseName monitoring (граблі №3). Селектор оператора вже
+          # нейтралізовано через serviceMonitorSelectorNilUsesHelmValues:
+          # false, але лейбл лишаємо для переносності.
+          labels:
+            release: monitoring
+          interval: 30s
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 🔴 БЕЗ ЦЬОГО БЛОКУ ПОД MLFLOW НЕ ЗАПУСТИТЬСЯ ВЗАГАЛІ
+        # ═══════════════════════════════════════════════════════════════════
+        # `--expose-prometheus=/mlflow/metrics` — це НЕ HTTP-шлях, як здається
+        # з назви. Це ТЕКА на диску: MLflow віддає її змінній
+        # PROMETHEUS_MULTIPROC_DIR і на старті робить os.makedirs().
+        # Кожен воркер gunicorn пише туди свої counter-файли — так працює
+        # prometheus_client у багатопроцесному режимі.
+        #
+        # А securityContext чарта має readOnlyRootFilesystem: true, і єдиний
+        # writable том — /tmp. Створити /mlflow/metrics неможливо, под падає
+        # ще до відкриття порту.
+        #
+        # Лікування: підкласти emptyDir саме туди. Том, змонтований у контейнер,
+        # завжди writable — readOnlyRootFilesystem на нього не діє.
+        # Дані там ефемерні й нікому не потрібні після рестарту, тому emptyDir
+        # (а не PVC) — правильний вибір.
+        extraVolumes:
+          - name: prometheus-multiproc
+            emptyDir: {}
+        extraVolumeMounts:
+          - name: prometheus-multiproc
+            mountPath: /mlflow/metrics
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # граблі №2: "metadata.annotations: Too long"
+    # Граблі №4: Application, що містить ServiceMonitor, падає ЦІЛКОМ, якщо
+    # CRD monitoring.coreos.com ще немає. Тому стек Теми 9 підіймаємо ПІСЛЯ
+    # Теми 8 — а retry страхує від гонки.
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

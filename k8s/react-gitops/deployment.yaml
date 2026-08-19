@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: react-app
+  template:
+    metadata:
+      labels:
+        app: react-app
+    spec:
+      containers:
+        - name: web
+          # Тег НЕ пишемо тут. Його підставляє kustomization.yaml через
+          # блок `images:` — саме той рядок і є «версією, що задеплоєна».
+          # Змінити версію = змінити один рядок у Git.
+          image: react-app
+          ports:
+            - name: http
+              containerPort: 8080 # nginx слухає 8080, бо працює не від root
+
+          # ── ⭐ Downward API ────────────────────────────────────────────
+          # Kubernetes передає в контейнер факти про нього самого.
+          # Їх підхопить entrypoint-скрипт і покладе в config.js,
+          # а React прочитає з window.APP_INFO.
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # APP_VERSION не задаємо: він уже вшитий в образ через
+            # ARG/ENV у Dockerfile. Образ сам знає свою версію.
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
+          # ── Посилення безпеки ─────────────────────────────────────────
+          securityContext:
+            runAsNonRoot: true # kubelet НЕ запустить под, якщо образ від root
+            runAsUser: 101 # користувач nginx у базовому образі
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem не вмикаємо: entrypoint пише config.js,
+            # а nginx — свій кеш. Для цього знадобились би emptyDir-томи.

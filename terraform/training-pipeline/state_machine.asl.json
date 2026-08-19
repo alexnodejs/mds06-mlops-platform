@@ -1,0 +1,239 @@
+{
+  "Comment": "Тема 10: автоматизоване тренування. GitHub Actions -> Step Functions -> Job у EKS -> MLflow -> quality gate -> прод.",
+  "StartAt": "ValidateParams",
+  "States": {
+
+    "ValidateParams": {
+      "Type": "Task",
+      "Comment": "Найдешевший крок іде першим: відсіює сміття з CI до того, як ми піднімемо под у кластері. 200 мс проти двох хвилин.",
+      "Resource": "${validate_arn}",
+      "ResultPath": "$.params",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "ParamsRejected" }
+      ],
+      "Next": "TrainOnEKS"
+    },
+
+    "TrainOnEKS": {
+      "Type": "Task",
+      "Comment": "Тренування як Job у кластері. .sync = чекати завершення. Step Functions опитує статус раз на хвилину, далі рідше — тому навіть 20-секундне тренування займе тут близько хвилини.",
+      "Resource": "arn:aws:states:::eks:runJob.sync",
+      "TimeoutSeconds": 1800,
+      "Parameters": {
+        "ClusterName": "${cluster_name}",
+        "CertificateAuthority": "${certificate_authority}",
+        "Endpoint": "${endpoint}",
+        "Namespace": "${namespace}",
+        "LogOptions": {
+          "RetrieveLogs": true,
+          "LogParameters": {
+            "tailLines": ["40"],
+            "limitBytes": ["65536"]
+          }
+        },
+        "Job": {
+          "apiVersion": "batch/v1",
+          "kind": "Job",
+          "metadata": {
+            "name.$": "States.Format('train-{}-{}', $.params.short_sha, $$.Execution.Name)"
+          },
+          "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": 1800,
+            "template": {
+              "spec": {
+                "restartPolicy": "Never",
+                "containers": [
+                  {
+                    "name": "train",
+                    "image": "${trainer_image}",
+                    "command": ["python", "train.py"],
+                    "envFrom": [{ "secretRef": { "name": "mlflow-credentials" } }],
+                    "env": [
+                      { "name": "MLFLOW_TRACKING_URI", "value": "http://mlflow.mlflow.svc.cluster.local:80" },
+                      { "name": "MLFLOW_EXPERIMENT_NAME", "value.$": "$.params.experiment" },
+                      { "name": "GRID_N_ESTIMATORS", "value.$": "$.params.grid_n_estimators" },
+                      { "name": "GRID_MAX_DEPTH", "value.$": "$.params.grid_max_depth" },
+                      { "name": "PROMOTE_TO_CHAMPION", "value": "false" }
+                    ],
+                    "resources": {
+                      "requests": { "cpu": "200m", "memory": "512Mi" },
+                      "limits": { "memory": "1Gi" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "ResultPath": "$.training",
+      "Retry": [
+        {
+          "ErrorEquals": ["EKS.409"],
+          "Comment": "409 = Job з таким іменем уже існує. Буває при повторному запуску того самого коміта в ту саму секунду.",
+          "IntervalSeconds": 10,
+          "MaxAttempts": 2
+        }
+      ],
+      "Catch": [
+        { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "TrainingFailed" }
+      ],
+      "Next": "EvaluateModel"
+    },
+
+    "EvaluateModel": {
+      "Type": "Task",
+      "Comment": "Quality gate. Читає stdout пода з поля logs і порівнює f1 нової моделі з чинною. Мережі не потребує: обидва числа вже в логах.",
+      "Resource": "${evaluate_arn}",
+      "InputPath": "$.training",
+      "ResultPath": "$.evaluation",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "EvaluationFailed" }
+      ],
+      "Next": "PromoteOrReject"
+    },
+
+    "PromoteOrReject": {
+      "Type": "Choice",
+      "Comment": "Розвилка зі слайда 24. Default обовʼязковий: без нього неспівпадіння дає States.NoChoiceMatched і виконання падає.",
+      "Choices": [
+        { "Variable": "$.evaluation.promote", "BooleanEquals": true, "Next": "PromoteModel" }
+      ],
+      "Default": "LogMetrics"
+    },
+
+    "PromoteModel": {
+      "Type": "Task",
+      "Comment": "Перевішує аліас @champion на нову версію і смикає POST /reload у сервісі моделі. Знову Job у кластері, бо MLflow і сервіс живуть за ClusterIP — ззовні їх не видно.",
+      "Resource": "arn:aws:states:::eks:runJob.sync",
+      "TimeoutSeconds": 300,
+      "Parameters": {
+        "ClusterName": "${cluster_name}",
+        "CertificateAuthority": "${certificate_authority}",
+        "Endpoint": "${endpoint}",
+        "Namespace": "${namespace}",
+        "LogOptions": {
+          "RetrieveLogs": true,
+          "LogParameters": { "tailLines": ["20"] }
+        },
+        "Job": {
+          "apiVersion": "batch/v1",
+          "kind": "Job",
+          "metadata": {
+            "name.$": "States.Format('promote-{}-{}', $.params.short_sha, $$.Execution.Name)"
+          },
+          "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": 1800,
+            "template": {
+              "spec": {
+                "restartPolicy": "Never",
+                "containers": [
+                  {
+                    "name": "promote",
+                    "image": "${trainer_image}",
+                    "command": ["python", "promote.py"],
+                    "envFrom": [{ "secretRef": { "name": "mlflow-credentials" } }],
+                    "env": [
+                      { "name": "MLFLOW_TRACKING_URI", "value": "http://mlflow.mlflow.svc.cluster.local:80" },
+                      { "name": "MODEL_VERSION", "value.$": "$.evaluation.version" }
+                    ],
+                    "resources": {
+                      "requests": { "cpu": "100m", "memory": "256Mi" },
+                      "limits": { "memory": "512Mi" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "ResultPath": null,
+      "Catch": [
+        { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PromotionFailed" }
+      ],
+      "Next": "LogMetrics"
+    },
+
+    "LogMetrics": {
+      "Type": "Task",
+      "Comment": "Крок 6 зі слайда 8: фіксація статусу. Обидві гілки сходяться сюди — прогін, який нічого не промоутив, теж має лишити слід у CloudWatch.",
+      "Resource": "${log_metrics_arn}",
+      "Parameters": {
+        "evaluation.$": "$.evaluation",
+        "params.$": "$.params"
+      },
+      "ResultPath": "$.summary",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "Outcome"
+    },
+
+    "Outcome": {
+      "Type": "Choice",
+      "Comment": "Лише щоб у графі виконання було видно результат одним поглядом, без розгортання JSON.",
+      "Choices": [
+        { "Variable": "$.evaluation.promote", "BooleanEquals": true, "Next": "Promoted" }
+      ],
+      "Default": "ModelRejected"
+    },
+
+    "Promoted": {
+      "Type": "Succeed",
+      "Comment": "Модель у проді. Сервіс на localhost:8000 уже показує нову версію."
+    },
+
+    "ModelRejected": {
+      "Type": "Succeed",
+      "Comment": "Quality gate не пропустив модель — і це НОРМАЛЬНИЙ результат, а не збій. Прод не змінився, причина з числами лежить у полі evaluation.reason. Саме тому тут Succeed, а не Fail: червоне виконання означало б зламаний пайплайн, а він відпрацював рівно так, як мав."
+    },
+
+    "ParamsRejected": {
+      "Type": "Fail",
+      "Error": "ParamsRejected",
+      "Cause": "Параметри з CI не пройшли перевірку. Деталі — у кроці ValidateParams."
+    },
+
+    "TrainingFailed": {
+      "Type": "Fail",
+      "Error": "TrainingFailed",
+      "Cause": "Job тренування впав. EKS.401 = немає Access Entry; 404 = немає namespace mlflow; інше — дивіться логи пода."
+    },
+
+    "EvaluationFailed": {
+      "Type": "Fail",
+      "Error": "EvaluationFailed",
+      "Cause": "Тренування пройшло, але quality gate не знайшов у логах події training_result. Ймовірно, замало рядків у LogOptions.tailLines."
+    },
+
+    "PromotionFailed": {
+      "Type": "Fail",
+      "Error": "PromotionFailed",
+      "Cause": "Модель краща, але перевісити аліас не вдалось. MLflow міг бути недоступний."
+    }
+  }
+}

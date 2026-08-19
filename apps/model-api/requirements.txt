@@ -1,0 +1,31 @@
+# Піни перевірені через PyPI 2026-08-12. Жодних діапазонів: образ мусить
+# збиратися однаково і сьогодні, і через півроку на лекції.
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn==0.52.1
+pydantic==2.13.4
+prometheus-client==0.26.0
+
+# ML-стек. Це 62% розміру образу (scipy ~138 MiB, numpy ~71 MiB, sklearn ~48 MiB),
+# але sklearn імпортує scipy на рівні модуля — RandomForest без нього не підніметься.
+scikit-learn==1.9.0
+numpy==2.5.2
+scipy==1.18.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+
+# Клієнт MLflow для завантаження моделі з реєстру (promote -> деплой).
+# mlflow-skinny, а НЕ повний mlflow: нам потрібні лише tracking-клієнт і
+# завантаження артефакту, а не сервер, UI та міграції БД. Різниця в розмірі
+# образу — сотні мегабайт.
+mlflow-skinny==3.15.1
+boto3==1.42.7
+# pandas — НЕ прямо для нас, а транзитивно: mlflow.sklearn імпортує
+# mlflow.types.utils, який на рівні модуля робить `import pandas`.
+# Без нього `import mlflow.sklearn` падає з ModuleNotFoundError.
+# skops — формат серіалізації, у якому MLflow 3.x зберігає sklearn-моделі
+# (замість pickle: не виконує довільний код при завантаженні). Без нього
+# load_model падає з "No module named 'skops'" — і то лише в РАНТАЙМІ,
+# коли модель уже знайдено в реєстрі.
+skops==0.14.0
+pandas==3.0.5

@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mlflow
+
+# Файл secret-example.yaml тут ВІДСУТНІЙ НАВМИСНО — це шаблон-Example.
+# Якби він був у resources, ArgoCD застосував би заглушки поверх реального
+# об'єкта і MinIO/Postgres/MLflow отримали б рядок «ЗАМІНІТЬ...» замість
+# пароля. Креденшели створюються одним kubectl поза Git (див. той файл).
+resources:
+  - namespace.yaml
+  - drift-exporter.yaml
+
+# Тег образу — в одному місці. Оновлення версії:
+#   kustomize edit set image ...=...:v2  (або просто правка newTag тут)
+# Мутабельні теги (:latest) не використовуємо принципово — граблі №6.
+images:
+  - name: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools
+    newTag: v2

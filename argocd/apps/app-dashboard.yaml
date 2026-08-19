@@ -1,0 +1,53 @@
+# Application для дашборду Grafana.
+#
+# НАВІЩО ОКРЕМИЙ Application, а не додати файл у k8s/kustomization.yaml:
+# у тій kustomization жорстко стоїть `namespace: ml-demo`, і трансформер
+# переписав би namespace ConfigMap-и з monitoring на ml-demo. Сайдкар його
+# все одно знайшов би (searchNamespace: ALL), але ConfigMap опинився б не
+# там, де його шукають за документацією — а це рівно та плутанина, якої
+# на занятті не треба.
+#
+# Слайд 22 вимагає, щоб СТЕК деплоївся через ArgoCD. Дашборд — частина стека,
+# тож ручний `kubectl apply` тут був би винятком, який ламає всю тезу.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ml-dashboard
+  namespace: argocd
+  annotations:
+    # Хвиля 2: Grafana (хвиля 0) уже має працювати, інакше сайдкару нікуди
+    # віддавати дашборд. Він, щоправда, підхопить ConfigMap і пізніше —
+    # watch висить постійно, — але порядок робить процес передбачуваним.
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    # Тека — kustomize-проєкт: у ній лежать самі .json дашбордів і
+    # kustomization.yaml з configMapGenerator. ArgoCD бачить kustomization.yaml
+    # і сам вмикає режим Kustomize, тож фільтр directory.include більше не
+    # потрібен — раніше він був, щоб ArgoCD не пробував застосувати .json як
+    # маніфест Kubernetes і не падав на відсутньому apiVersion.
+    path: k8s/grafana-dashboards
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

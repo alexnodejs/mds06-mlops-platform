@@ -1,0 +1,57 @@
+# Deployment — «тримай N однакових подів запущеними».
+# Це відповідь на питання зі слайда 15: саме Deployment описує контейнери
+# та кількість їхніх реплік.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  namespace: demo-kubectl
+spec:
+  replicas: 2 # скільки подів тримати; за цим стежить ReplicaSet
+
+  selector: # за якою міткою Deployment вважає под «своїм»
+    matchLabels:
+      app: nginx-demo
+
+  template: # шаблон пода — з нього штампуються всі репліки
+    metadata:
+      labels:
+        app: nginx-demo # має збігатися з selector вище, інакше API відхилить
+    spec:
+      containers:
+        - name: nginx
+          # public.ecr.aws, а не Docker Hub: на занятті вся група виходить
+          # в інтернет через один NAT кластера, а Docker Hub ріже анонімні
+          # pull'и за IP (100 за 6 годин) -> ImagePullBackOff у половини групи.
+          # Дзеркало AWS ліміту не має і живе в тому ж регіоні eu-central-1.
+          image: public.ecr.aws/nginx/nginx:1.29-alpine
+          ports:
+            - containerPort: 80
+
+          # ── Монтуємо ConfigMap як файл ────────────────────────────────
+          # Ключ index.html з ConfigMap стане файлом
+          # /usr/share/nginx/html/index.html — тобто головною сторінкою nginx.
+          volumeMounts:
+            - name: html # має збігатися з іменем volume нижче
+              mountPath: /usr/share/nginx/html
+
+          resources:
+            requests: # скільки гарантовано зарезервувати (на це дивиться Scheduler)
+              cpu: 50m
+              memory: 32Mi
+            limits: # стеля; перевищить памʼять — контейнер вбʼє OOMKiller
+              cpu: 200m
+              memory: 128Mi
+
+          readinessProbe: # «чи готовий приймати трафік?»
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 2
+          livenessProbe: # «чи він взагалі живий?» — якщо ні, kubelet рестартне
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 10
+
+      # ── Оголошення volume ───────────────────────────────────────────────
+      volumes:
+        - name: html
+          configMap:
+            name: nginx-html # ← той самий ConfigMap із configmap.yaml

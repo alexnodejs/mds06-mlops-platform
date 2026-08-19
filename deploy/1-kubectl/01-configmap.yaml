@@ -1,0 +1,40 @@
+# ConfigMap — сховище НЕсекретної конфігурації (слайд 10: Deployment, Service, ConfigMap).
+# Тут ми кладемо цілу HTML-сторінку і далі монтуємо її в контейнер як файл.
+# Так само у реальному ML-сервісі сюди кладуть config.yaml, пороги моделі, назви фіч.
+#
+# Для секретів (паролі, токени) є окремий тип — Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-html
+  namespace: demo-kubectl
+data:
+  # Ключ стане ІМЕНЕМ ФАЙЛУ при монтуванні, значення — вмістом файлу.
+  # `|` — YAML-блок: зберегти переноси рядків як є.
+  index.html: |
+    <!doctype html>
+    <html lang="uk">
+    <head>
+      <meta charset="utf-8">
+      <title>Спосіб 1 — kubectl</title>
+      <style>
+        body{margin:0;height:100vh;display:grid;place-items:center;
+             font-family:system-ui,-apple-system,sans-serif;
+             background:#326CE5;color:#fff;text-align:center}
+        .n{font-size:clamp(4rem,14vw,9rem);font-weight:800;line-height:.9;opacity:.35}
+        h1{font-size:clamp(1.6rem,5vw,3rem);margin:.1em 0 .3em}
+        p{font-size:clamp(1rem,2.4vw,1.35rem);opacity:.9;max-width:34ch;margin:.4em auto;line-height:1.5}
+        code{background:rgba(0,0,0,.28);padding:.15em .45em;border-radius:4px;font-size:.9em}
+      </style>
+    </head>
+    <body>
+      <div>
+        <div class="n">1</div>
+        <h1>kubectl apply</h1>
+        <p>Мене застосували <strong>вручну</strong>, файл за файлом.</p>
+        <p><code>kubectl apply -f deploy/1-kubectl/</code></p>
+        <p>Прозоро й гнучко — але параметризації немає:
+           щоб зробити другий такий самий стенд, доведеться копіювати YAML.</p>
+      </div>
+    </body>
+    </html>

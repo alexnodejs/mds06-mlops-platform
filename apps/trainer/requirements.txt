@@ -1,0 +1,40 @@
+# Піни перевірені через PyPI 2026-08-17 і РЕАЛЬНО встановлені у venv, на якому
+# train_mlflow.py прогнано. Жодних діапазонів: образ мусить збиратися однаково
+# і сьогодні, і через півроку на лекції.
+#
+# Це requirements КОНТРАКТНОГО образу mds06-mlflow-tools:v1, тобто сюди входять
+# і залежності дріфт-експортера (scipy + prometheus-client). drift/requirements.txt
+# — строгий підмножина цього файлу.
+
+mlflow==3.15.1
+# boto3 mlflow НЕ тягне сам, а без нього log_artifact у MinIO падає з
+# "Unsupported URI scheme s3" — артефакти вантажить КЛІЄНТ (у values MLflow
+# proxiedArtifactStorage: false), тому boto3 потрібен саме тут.
+boto3==1.43.72
+
+# ML-стек — ті самі піни, що в моделі Теми 8, щоб модель, натренована тут,
+# завантажувалася там без попереджень про версію sklearn.
+scikit-learn==1.9.0
+numpy==2.5.2
+scipy==1.18.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+
+# pandas і matplotlib mlflow притягує сам, але ми ІМПОРТУЄМО їх прямо
+# (DataFrame для signature, PNG матриці невідповідностей), тож пінимо явно:
+# інакше наш код залежить від того, що вирішить резолвер mlflow.
+pandas==2.3.3
+matplotlib==3.11.1
+
+# Для дріфт-експортера, який лежить у цьому ж образі.
+prometheus-client==0.26.0
+
+# Evidently НЕ ставимо навмисно: +500-700 MiB (pyarrow, plotly, litestar,
+# statsmodels, nltk) заради HTML-звіту, який у гарячому шляху не потрібен,
+# а експортера в Prometheus він однаково не має (модуль model_monitoring
+# вилучено). Для окремого лабораторного кроку зі save_html() розкоментуйте:
+# evidently==0.7.21
+#
+# alibi-detect НЕ СТАВИТИ В ЦЕЙ ОБРАЗ у принципі: його setup.py прибиває
+# numpy<2.0.0, а тут numpy 2.5.2 і mlflow, який теж на numpy 2. Це не
+# попередження, а зламана збірка.

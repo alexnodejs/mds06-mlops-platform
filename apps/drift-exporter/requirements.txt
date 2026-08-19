@@ -1,0 +1,13 @@
+# Строга підмножина train/requirements.txt — ті самі піни, ті самі версії.
+# Потрібна лише для НЕОБОВ'ЯЗКОВОГО легкого образу (drift/Dockerfile):
+# контрактний образ mds06-mlflow-tools:v1 містить ці пакети вже з train/.
+#
+# Нових залежностей проти Теми 8 — НУЛЬ. Саме тому дріфт рахує scipy, а не
+# Evidently (+500-700 MiB) чи alibi-detect (numpy<2 => зламана збірка).
+
+scikit-learn==1.9.0
+numpy==2.5.2
+scipy==1.18.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+prometheus-client==0.26.0

@@ -1,0 +1,122 @@
+# PostgreSQL — backend store MLflow (слайд 22): параметри, метрики, теги і
+# ЛІНКИ на артефакти. Самі артефакти лежать у MinIO, у базі — тільки метадані.
+#
+# ЧОМУ groundhog2k/postgres, А НЕ bitnami/postgresql (той, що стоїть
+# залежністю у Chart.yaml community-charts/mlflow) — три перевірені причини:
+#  1) політика Bitnami з 28.08.2025: усі версійні теги перенесено в
+#     docker.io/bitnamilegacy (заморожені, без оновлень), безкоштовно лишився
+#     ЛИШЕ тег latest. Саме тому у values того чарта дослівно image.tag: latest;
+#  2) мутабельний latest НА БАЗІ ДАНИХ — це граблі №6 у найгіршій формі: нода
+#     колись підтягне іншу мажорну версію PG, PGDATA стане несумісним ->
+#     CrashLoopBackOff і втрачені експерименти;
+#  3) ПЕРЕВІРЕНО curl: charts.bitnami.com/bitnami/postgresql-18.8.6.tgz ->
+#     HTTP 403, тобто ArgoCD навіть не завантажить залежність.
+# Тому в app-mlflow.yaml стоїть postgresql.enabled: false, а базу ставимо
+# окремо: groundhog2k тягне ОФІЦІЙНИЙ docker.io/postgres:18.6 — immutable
+# тег, multi-arch, без підписки.
+#
+# ЗАГАЛЬНЕ ПРАВИЛО НА МАЙБУТНЄ: побачив bitnami/ у dependencies чужого
+# Chart.yaml — перевір, чи не тягне воно тег latest.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  annotations:
+    # Хвиля 0: разом з MinIO, паралельно — вони незалежні.
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://groundhog2k.github.io/helm-charts
+    chart: postgres
+    targetRevision: 1.6.8
+    helm:
+      releaseName: postgres
+      valuesObject:
+        # releaseName + fullnameOverride дають DNS РІВНО
+        # postgres.mlflow.svc.cluster.local — саме його чекає MLflow.
+        fullnameOverride: postgres
+
+        # Пінимо тег явно, а не через appVersion чарта: версія бази видна
+        # прямо тут, і патч чарта не перетягне мінор PG під нами.
+        image:
+          tag: "18.6"
+
+        # Домовленість про запис нижче: «Example-ключ» = ім'я ключа з
+        # шаблону k8s/secret-example.yaml (Example), де описані всі 11.
+        settings:
+          existingSecret: mlflow-credentials
+          # Пароль суперюзера postgres: офіційний образ без нього не стартує,
+          # MLflow ним НЕ користується.
+          superuserPassword: { secretKey: POSTGRES_POSTGRES_PASSWORD } # Example-ключ
+
+        # Чарт монтує init-скрипт 01-init-userdb.sh, який робить
+        #   CREATE USER mlflow; CREATE DATABASE mlflow;
+        #   ALTER DATABASE mlflow OWNER TO mlflow;
+        # У PG 15+ схема public належить ролі pg_database_owner, тож власник
+        # БД (mlflow) отримує CREATE -> міграції MLflow проходять. На PG <15
+        # тут була б класична "permission denied for schema public".
+        userDatabase:
+          existingSecret: mlflow-credentials
+          name: { secretKey: POSTGRES_DB } # Example-ключ -> env POSTGRES_DB = mlflow
+          user: { secretKey: POSTGRES_USER } # Example-ключ -> env USERDB_USER = mlflow
+          password: { secretKey: POSTGRES_PASSWORD } # Example-ключ -> env USERDB_PASSWORD
+
+        storage:
+          # 8Gi: метадані експериментів Iris — це мегабайти, але менший EBS
+          # брати нема сенсу (gp3 $0.0952/GiB-міс => 8Gi ≈ 2.5 центи/добу).
+          requestedSize: 8Gi
+          className: gp3
+          # 🔴 ЩОБ selfHeal / prune НЕ ЗНЕСЛИ ЕКСПЕРИМЕНТИ РАЗОМ З ПОДОМ.
+          # Дефолт StatefulSet у Kubernetes і так Retain, але тут ми пишемо
+          # це ЯВНО: у ланцюжку «Git -> ArgoCD -> StatefulSet» будь-хто може
+          # ненавмисно видалити ресурс, а PVC мусить це пережити.
+          persistentVolumeClaimRetentionPolicy:
+            whenDeleted: Retain
+            whenScaled: Retain
+
+        # 256Mi requests / 512Mi limits. Обґрунтування: PG 18 у спокої
+        # тримає ~60-80 MiB RSS; shared_buffers за замовчуванням 128 MB
+        # виділяються поверх; під міграціями MLflow і десятком з'єднань
+        # реально бачимо ~200 MiB. 512Mi — приблизно двократний запас.
+        # Робити менше НЕ ВАРТО: пам'ять у цьому кластері не вузьке місце
+        # (61% requests), вузьке місце — СЛОТИ ПОДІВ. Прибивати ліміти
+        # «щоб зекономити» тут не дає нічого, крім OOMKilled (граблі №1).
+        resources:
+          requests: { cpu: 100m, memory: 256Mi }
+          limits: { memory: 512Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # граблі №2: "metadata.annotations: Too long"
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+# ЩО ЗАЛИШАЄТЬСЯ ВАШОЮ ВІДПОВІДАЛЬНІСТЮ, а не ArgoCD:
+#  1) PVC постгреса створює StatefulSet, а не Git. ArgoCD його не трекає
+#     (немає лейбла argocd.argoproj.io/instance), тож prune його НЕ знесе —
+#     але й `terraform destroy` про диск не знає. Забутий 8 GiB gp3 тихо
+#     тягне $0.76/міс роками. Гасіння: kubectl -n mlflow delete pvc --all,
+#     потім перевірити, що `aws ec2 describe-volumes
+#     --filters Name=status,Values=available` порожній.
+#  2) Ротація пароля НЕ ПРАЦЮЄ так, як здається: офіційний образ виконує
+#     docker-entrypoint-initdb.d ТІЛЬКИ на порожньому PGDATA. Змінили значення
+#     у креденшелах, перезапустили под -> MLflow отримає від бази
+#     'FATAL: authentication failed for user "mlflow"'. Лікується або ALTER
+#     USER у самій БД, або видаленням PVC разом із даними:
+#       kubectl -n mlflow exec sts/postgres -- psql -U postgres -c "ALTER USER mlflow PASSWORD 'нове'"   # ЗАМІНІТЬ 'нове'
+#       kubectl -n mlflow delete pvc postgres-data-postgres-0   # + усі експерименти
+#     Це, до речі, готова вправа для студентів про справжню ціну
+#     «одного об'єкта з креденшелами на все».

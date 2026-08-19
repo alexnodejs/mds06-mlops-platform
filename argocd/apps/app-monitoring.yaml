@@ -1,0 +1,225 @@
+# kube-prometheus-stack 88.3.0 (app v0.93.0) — Prometheus + Grafana +
+# kube-state-metrics + node-exporter. Сховище кластера зламане, тож ЖОДНОГО PVC.
+#
+# releaseName МУСИТЬ бути "monitoring": від Release.Name залежать імена
+# сервісів (svc/monitoring-grafana) і дефолтний лейбл release: monitoring.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  annotations:
+    # Черга розгортання: CRD Prometheus мусять приїхати ДО ServiceMonitor
+    argocd.argoproj.io/sync-wave: "0"
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 88.3.0
+    helm:
+      releaseName: monitoring
+      valuesObject:
+        # ── 1. ЩО ВИМИКАЄМО НА EKS (control plane керує AWS -> вічні "down") ──
+        kubeControllerManager: { enabled: false }   # немає Endpoints на EKS
+        kubeScheduler:         { enabled: false }   # немає Endpoints на EKS
+        kubeEtcd:              { enabled: false }   # порт 2379 недоступний
+        kubeProxy:             { enabled: false }   # metricsBindAddress=127.0.0.1 -> connection refused
+
+        kubeApiServer: { enabled: true }
+        kubelet:
+          enabled: true
+          serviceMonitor:
+            cAdvisor: true          # -> метрики container_* для панелей CPU/Memory (слайд 37)
+        coreDns: { enabled: true }
+        kubeDns: { enabled: false }
+        windowsMonitoring: { enabled: false }
+        thanosRuler: { enabled: false }
+
+        # ── 2. ALERTMANAGER вимкнено: -1 под, -PVC, -100m/200Mi ──
+        alertmanager:
+          enabled: false
+
+        defaultRules:
+          create: true
+          rules:
+            alertmanager: false
+            etcd: false
+            kubeControllerManager: false
+            kubeSchedulerAlerting: false
+            kubeSchedulerRecording: false
+            kubeProxy: false
+            kubernetesStorage: false   # сховище зламане -> алерти по PVC це шум
+            windows: false
+
+        # ── 3. PROMETHEUS ──
+        prometheus:
+          enabled: true
+          prometheusSpec:
+            # БЕЗ PVC: явний emptyDir, щоб ніхто не увімкнув volumeClaimTemplate.
+            # medium: Memory НЕ ставимо — tmpfs з'їдав би ліміт пам'яті пода.
+            storageSpec:
+              emptyDir:
+                sizeLimit: 2Gi
+            retention: 12h            # emptyDir живе стільки ж, скільки под
+            retentionSize: 1GB        # МУСИТЬ бути менше sizeLimit вище
+            scrapeInterval: 60s
+            evaluationInterval: 60s
+            replicas: 1
+            shards: 1
+
+            # ── ГОЛОВНА ПАСТКА ЧАРТА ──
+            # З дефолтами оператор рендерить serviceMonitorSelector:
+            #   matchLabels: { release: monitoring }
+            # і ServiceMonitor без цього лейбла ігнорується МОВЧКИ.
+            # Крос-namespace пошук при цьому працює завжди
+            # (serviceMonitorNamespaceSelector: {} рендериться безумовно),
+            # тому шукати проблему в namespace — марна трата годин.
+            # Спроба написати `serviceMonitorSelector: {}` прямо тут НЕ ПРАЦЮЄ:
+            # порожня мапа у Go-шаблоні falsy, і гілка if її не бачить.
+            # Єдиний робочий важіль — саме ці п'ять прапорців.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            scrapeConfigSelectorNilUsesHelmValues: false
+
+            resources:
+              requests: { cpu: 200m, memory: 700Mi }
+              limits:   { cpu: 800m, memory: 1400Mi }
+          service:
+            type: ClusterIP
+
+        # ── 4. PROMETHEUS OPERATOR ──
+        prometheusOperator:
+          enabled: true
+          resources:
+            requests: { cpu: 50m,  memory: 128Mi }
+            limits:   { cpu: 200m, memory: 256Mi }
+          admissionWebhooks:
+            enabled: true
+            # Без цих анотацій ArgoCD тримає Job-и назавжди у дереві застосунку
+            # і показує вічний OutOfSync/Progressing.
+            annotations:
+              argocd.argoproj.io/hook: PreSync
+              argocd.argoproj.io/hook-delete-policy: HookSucceeded
+            patch:
+              enabled: true
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits:   { cpu: 50m, memory: 64Mi }
+
+        # ── 5. KUBE-STATE-METRICS (панелі CPU/Memory, слайд 37) ──
+        kubeStateMetrics:
+          enabled: true
+        kube-state-metrics:
+          resources:
+            requests: { cpu: 20m,  memory: 64Mi }
+            limits:   { cpu: 100m, memory: 128Mi }
+
+        # ── 6. NODE EXPORTER (DaemonSet -> 2 поди на 2 нодах) ──
+        nodeExporter:
+          enabled: true
+        prometheus-node-exporter:
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits:   { cpu: 50m, memory: 64Mi }
+
+        # ── 7. GRAFANA ──
+        grafana:
+          enabled: true
+          # БЕЗ PVC. persistence.type тут НЕ вказуємо: валідні значення лише
+          # "pvc"/"sts", "emptyDir" не існує. При enabled:false чарт і так
+          # монтує emptyDir {}.
+          persistence:
+            enabled: false
+          adminPassword: admin        # навчальний кластер; у проді -> existingSecret
+          service:
+            type: ClusterIP
+            # доступ: kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80
+          resources:
+            # 🔴 НЕ ЗНИЖУВАТИ ліміт памʼяті нижче 512Mi.
+            # Заміряно на живому кластері 13.08 о 16:09: із limits 256Mi
+            # контейнер grafana отримав OOMKilled (exit 137) РІВНО в момент,
+            # коли відкрили дашборд — рендеринг 7 панелей плюс запити до
+            # Prometheus дали стрибок понад ліміт. У спокої він тримає ~160Mi,
+            # тобто 256Mi виглядають достатніми, поки на дашборд ніхто не дивиться.
+            #
+            # Перевірити запас будь-коли:
+            #   container_memory_working_set_bytes{container="grafana"}
+            #     / on(namespace,pod,container) group_left
+            #   kube_pod_container_resource_limits{resource="memory",container="grafana"}
+            requests: { cpu: 100m, memory: 192Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard   # сюди чіпляється дашборд зі слайда 37
+              searchNamespace: ALL
+            datasources:
+              enabled: true
+              searchNamespace: ALL
+              # alertmanager.enabled=false, але сайдкар усе одно провіжинить
+              # datasource "Alertmanager" на неіснуючий сервіс. У Grafana це
+              # червона помилка в Alerting просто посеред демонстрації.
+              #
+              # ⚠️ Цей ключ МУСИТЬ бути тут, усередині єдиного блоку datasources.
+              # Другий окремий `datasources:` під sidecar: YAML мовчки відкидає
+              # (дублікат ключа — виграє останній), і налаштування зникає без помилки.
+              alertmanager:
+                enabled: false
+            resources:
+              # 🔴 НЕ ЗНИЖУВАТИ. Заміряно на живому кластері: з limits 64Mi
+              # обидва сайдкари йшли в CrashLoopBackOff з OOMKilled (exit 137),
+              # і Grafana лишалась БЕЗ дашбордів і БЕЗ datasource. Найгірше —
+              # под при цьому рахувався Running, а ArgoCD показував Synced/Healthy.
+              #
+              # Причина: k8s-sidecar на Python із NAMESPACE=ALL тримає WATCH на
+              # ConfigMap у ВСІХ namespace. Сам інтерпретатор з kubernetes-client
+              # з'їдає ~70-90Mi ще до першого прочитаного об'єкта.
+              requests: { cpu: 10m, memory: 96Mi }
+              limits:   { cpu: 100m, memory: 192Mi }
+          additionalDataSources:
+            # УВАГА: не loki-gateway.monitoring — gateway у нашому релізі Loki
+            # вимкнено, а сам Loki живе в namespace logging.
+            - name: Loki
+              uid: loki   # фіксований uid: інакше Grafana згенерує випадковий
+              type: loki
+              access: proxy
+              url: http://loki.logging.svc.cluster.local:3100
+              isDefault: false
+          grafana.ini:
+            auth.anonymous:
+              enabled: true
+              org_role: Viewer
+            analytics:
+              reporting_enabled: false
+              check_for_updates: false
+
+        # ── 8. CRDs ──
+        crds:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # CRD Prometheus важить понад 1 МБ. Клієнтський apply пише його у
+      # анотацію last-applied-configuration і падає з "metadata.annotations:
+      # Too long". Server-side apply знімає це обмеження — без нього перший
+      # sync цього чарта просто не пройде.
+      - ServerSideApply=true
+    retry:
+      # Перший sync: CR Prometheus може приїхати раніше, ніж API-сервер
+      # зареєструє щойно створений CRD. Ретрай розрулює цю гонку сам.
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

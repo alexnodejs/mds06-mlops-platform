@@ -1,0 +1,27 @@
+# kustomization.yaml — «збірний файл» Kustomize.
+# Kustomize НЕ шаблонізатор: тут немає {{ }}. Він бере готові валідні YAML
+# і накладає на них зміни. У цьому і різниця з Helm (слайд 14).
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Які файли входять у базу.
+resources:
+  - deployment.yaml
+  - service.yaml
+
+# ── configMapGenerator — ⭐ головна перевага Kustomize над ручним YAML ──────
+# Створює ConfigMap із ЗВИЧАЙНОГО файлу index.html. Не треба вставляти HTML
+# усередину YAML з відступами, як ми робили у способі 1.
+#
+# І найважливіше: Kustomize додає до імені ХЕШ вмісту:
+#     nginx-html  ->  nginx-html-9f2b4c7d8h
+# Змінили index.html -> змінився хеш -> змінилось імʼя ConfigMap ->
+# змінився под -> Deployment САМ робить rolling update.
+#
+# Порівняйте з Helm: там для цього довелось руками писати
+# анотацію checksum/config. Kustomize робить це з коробки.
+configMapGenerator:
+  - name: nginx-html
+    files:
+      - index.html

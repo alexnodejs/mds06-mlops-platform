@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-react
+  labels:
+    lesson: topic-6
+    method: argocd

@@ -1,0 +1,22 @@
+{{/*
+NOTES.txt — Helm друкує цей текст ПІСЛЯ install/upgrade.
+Це теж шаблон, тому сюди можна підставляти реальні імена ресурсів —
+студент одразу отримує готову команду замість інструкції в методичці.
+*/}}
+✅ Реліз "{{ .Release.Name }}" встановлено в namespace "{{ .Release.Namespace }}".
+
+Чарт:    {{ .Chart.Name }}-{{ .Chart.Version }} (додаток {{ .Chart.AppVersion }})
+Реплік:  {{ .Values.replicaCount }}
+Сервіс:  {{ .Values.service.type }} на порту {{ .Values.service.port }}
+
+Подивитись сторінку:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "nginx-demo.fullname" . }} 8082:{{ .Values.service.port }}
+
+  Далі відкрийте http://localhost:8082
+
+Корисне:
+
+  helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
+  helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+  helm history {{ .Release.Name }} -n {{ .Release.Namespace }}

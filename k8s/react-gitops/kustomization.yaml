@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: demo-react
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: react-app
+      app.kubernetes.io/part-of: mds06
+
+# ══════════════════════════════════════════════════════════════════════════
+# ⭐ ОСЬ ТУТ ЖИВЕ «ЯКА ВЕРСІЯ ЗАДЕПЛОЄНА»
+# ══════════════════════════════════════════════════════════════════════════
+# У deployment.yaml написано просто `image: react-app` — без реєстру й тега.
+# Kustomize підмінює це на повне імʼя з рядків нижче.
+#
+# Оновити застосунок = змінити newTag, закомітити, запушити.
+# ArgoCD побачить зміну в Git і сам перекотить поди. Жодного kubectl.
+#
+# ⚠️ НІКОЛИ не ставте тут :latest.
+#    Git тоді не знає, що саме працює в кластері, і ArgoCD не побачить
+#    зміни — тег же не змінився. Відкотитись теж не буде куди.
+#    Тег має бути незмінним: v1, v2 або git-SHA.
+images:
+  - name: react-app
+    newName: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-react-gitops
+    newTag: v2

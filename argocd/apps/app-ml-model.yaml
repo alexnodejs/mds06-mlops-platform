@@ -1,0 +1,55 @@
+# ML-сервіс із цього ж репозиторію (GitOps, слайд 22).
+# kubectl apply -f argocd/app-ml-model.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ml-model
+  annotations:
+    # Черга розгортання: CRD Prometheus мусять приїхати ДО ServiceMonitor
+    argocd.argoproj.io/sync-wave: "2"
+  namespace: argocd
+  finalizers:
+    # Видалення Application -> каскадне видалення всіх його ресурсів.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    path: k8s/model-api
+    # kustomization.yaml у k8s/ ArgoCD знаходить сам — блок kustomize не потрібен.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ml-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Без цього рядка ignoreDifferences (внизу файлу) працює ЛИШЕ на diff:
+      # ArgoCD не показує розбіжність і selfHeal мовчить, але БУДЬ-який інший
+      # sync — новий коміт, ручний Sync, retry — застосовує маніфест цілком,
+      # разом із replicas: 0, і генератор вимикається посеред лекції.
+      # RespectIgnoreDifferences виключає ці поля ще й з того, що ArgoCD
+      # реально надсилає в кластер.
+      - RespectIgnoreDifferences=true
+    # Без retry automated sync НЕ повторює невдалу спробу для тієї самої
+    # ревізії. Перший sync майже завжди падає, поки CRD ServiceMonitor ще
+    # не встановлено — і застосунок лишається червоним назавжди.
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+  # БЕЗ цього блоку selfHeal за ~хвилину поверне replicas назад у 0 і
+  # `kubectl scale deploy/load-generator --replicas=1` під час лекції
+  # мовчки відкотиться. Реплік-каунт генератора керується руками, не Git-ом.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: load-generator
+      namespace: ml-demo
+      jsonPointers:
+        - /spec/replicas

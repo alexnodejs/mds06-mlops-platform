@@ -1,0 +1,78 @@
+# БОНУС: ArgoCD + Helm.
+#
+# Це саме те, що на слайді 39 названо темою наступного заняття.
+# Головна думка: для ArgoCD не важливо, ЧИМ спаковано застосунок.
+# Kustomize, Helm, звичайні YAML — джерело істини все одно Git.
+#
+# Порівняйте цей файл із application-kustomize.yaml: різниця тільки
+# в блоці source. Решта — та сама.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-gitops-helm
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # 🔴 ЗАМІНІТЬ НА СВІЙ РЕПОЗИТОРІЙ
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    path: deploy/2-helm/nginx-demo
+
+    # ArgoCD побачить Chart.yaml і сам зрозуміє, що це Helm.
+    # Блок helm потрібен, лише якщо хочемо щось перевизначити.
+    helm:
+      # Використати додатковий файл значень. Шлях — відносно `path` вище.
+      valueFiles:
+        - values.yaml
+
+      # Точкові перевизначення. Еквівалент `helm install --set ...`.
+      # Тут робимо сторінку фіолетовою, щоб її було видно від Helm-деплою
+      # з кроку 2, який ми ставили руками.
+      parameters:
+        - name: page.accent
+          value: "#6A1B9A"
+        - name: page.title
+          value: "Helm через ArgoCD"
+        # Без цього рядка сторінка малює величезну «2» з values.yaml —
+        # студент бачить фіолетовий екран з номером способу 2 і думає,
+        # що дивиться на Helm-деплой з кроку 2, а не на ArgoCD.
+        - name: page.number
+          value: "4"
+        - name: replicaCount
+          value: "2"
+
+      # ArgoCD виконує `helm template`, а НЕ `helm install`.
+      # Тому релізу в `helm list` ви не побачите — станом керує ArgoCD.
+      # Це нормально і саме так задумано.
+      #
+      # Імʼя збігається з іменем чарту, тому хелпер fullname не дублюватиме
+      # його: сервіс називатиметься просто `nginx-demo`, як і в решті способів.
+      releaseName: nginx-demo
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo-gitops-helm
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Тут namespace у чарті не оголошено, тому створити його
+      # має саме ArgoCD — без цього рядка синхронізація впаде.
+      - CreateNamespace=true
+
+    # Ті самі 3 спроби з backoff, що й у application-kustomize.yaml.
+    # Перша синхронізація часто падає, поки namespace ще створюється;
+    # без retry Application лишається в стані Failed до ручного Sync.
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

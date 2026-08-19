@@ -1,0 +1,45 @@
+# БАЗА. Тут немає ні namespace, ні кількості реплік «під середовище».
+# Це найзагальніший варіант — усе специфічне накладуть overlays.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+spec:
+  replicas: 1 # overlays перевизначать це через поле `replicas:`
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+    spec:
+      containers:
+        - name: nginx
+          # public.ecr.aws, а не Docker Hub: на занятті вся група виходить
+          # в інтернет через один NAT кластера, а Docker Hub ріже анонімні
+          # pull'и за IP (100 за 6 годин) -> ImagePullBackOff у половини групи.
+          # Дзеркало AWS ліміту не має і живе в тому ж регіоні eu-central-1.
+          image: public.ecr.aws/nginx/nginx:1.29-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 2
+      volumes:
+        - name: html
+          configMap:
+            # Пишемо ПРОСТЕ імʼя. Kustomize сам перепише його на
+            # nginx-html-<хеш> — і тут, і в самому ConfigMap.
+            # Саме тому змінений HTML автоматично перезапускає поди.
+            name: nginx-html

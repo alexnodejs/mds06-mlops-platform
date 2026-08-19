@@ -1,0 +1,28 @@
+# ПАСТКА №1 (найдорожча): за замовчуванням kube-prometheus-stack рендерить
+#   serviceMonitorSelector: { matchLabels: { release: monitoring } }
+# і ServiceMonitor БЕЗ цього лейбла ігнорується мовчки — ні помилки, ні події,
+# просто немає таргета в /targets. У наших values вимкнено
+# serviceMonitorSelectorNilUsesHelmValues, тож селектор порожній ({} = "всі").
+# Лейбл release: monitoring лишаємо все одно — щоб цей файл працював і з
+# дефолтними values, якщо хтось їх поверне.
+#
+# ПАСТКА №2: spec.selector.matchLabels має збігатися з лейблами SERVICE
+# (не Deployment і не пода), а endpoints[].port — це ІМ'Я порту в Service.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ml-model
+  namespace: ml-demo
+  labels:
+    app: ml-model
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: ml-model
+  namespaceSelector:
+    matchNames: [ml-demo]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

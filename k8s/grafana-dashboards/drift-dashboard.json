@@ -1,0 +1,1168 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Якість моделі Iris RandomForest: дріфт даних (KS-тест по 4 ознаках), дріфт прогнозів (хі-квадрат по класах) і показники сервісу зі слайда 34 (Latency, Error rate). Джерело метрик drift_* — под drift-exporter у namespace mlflow; predict_* і http_requests_total — ml-model у ml-demo (Тема 8). ПОРІГ: експортер порівнює p-value з 0.01, а не з підручниковими 0.05 — на панелі 7 намальовані обидві лінії, різниця пояснена в її описі.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "1. Дріфт зараз: скільки ознак",
+      "description": "Сума drift_detected по всіх лейблах feature: 4 числові ознаки + окремий ряд feature=\"prediction\" (хі-квадрат по класах), тобто максимум 5. `or vector(0)` потрібен, бо доки експортер не зробив ЖОДНОЇ перевірки, метрики не існує зовсім, і панель показувала б «No data» — а це виглядає так само, як «дріфту немає», хоча означає протилежне. УВАГА: 0 тут не завжди означає «все добре» — якщо трафіку немає (current_window_size < 30), експортер свідомо НЕ оновлює drift_detected, тож дивіться панель 3 (свіжість) разом із цією.",
+      "id": 1,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "max": 5,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(drift_detected) or vector(0)",
+          "legendFormat": "ознак з дріфтом",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "2. Найпроблемніша ознака",
+      "description": "bottomk(1, drift_p_value) — ознака з НАЙМЕНШИМ p-value, тобто та, де розподіл поточних даних найдалі від еталона. Саме її показують першою, коли питають «а що конкретно поїхало». Дуже малі p (1e-11 і нижче) панель Stat округлює візуально — точне число дивіться в панелі 8 або в тултипі панелі 7.",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 5,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.01
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "bottomk(1, drift_p_value)",
+          "legendFormat": "{{feature}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "3. Свіжість перевірки",
+      "description": "time() - drift_check_timestamp_seconds — скільки секунд минуло з останньої УСПІШНОЇ перевірки. При CHECK_INTERVAL=60 нормальне значення 0-90 с (скрейп раз на 30 с додає лаг). Жовтий на 120, червоний на 180. НАВІЩО ЦЯ ПАНЕЛЬ: усі drift_* — це Gauge у памʼяті пода. Якщо експортер помер або Loki недоступний, Gauge залишаються з ОСТАННІМИ значеннями, і дашборд показує зелений спокій на застарілих даних. Це єдина панель, яка ловить таку брехню.",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 10,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 180
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "time() - drift_check_timestamp_seconds",
+          "legendFormat": "секунд тому",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "4. Розмір вікна",
+      "description": "current_window_size — скільки лог-рядків з валідними 4 ознаками експортер витягнув з Loki за останні WINDOW_MINUTES=10 хвилин. При RPS=5 і 5% битих запитів очікувано ~2800-3000. Червоне до 30 (MIN_SAMPLES): KS-тест на десятку точок — це не тест, а генератор випадкових чисел. Стеля 5000 — це дефолтний max_entries_limit_per_query у Loki, вище експортер просто не побачить.",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 15,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 30
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "current_window_size",
+          "legendFormat": "записів у вікні",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "5. Тест взагалі виконується?",
+      "description": "current_window_size >= bool 30. Модифікатор bool перетворює порівняння з ФІЛЬТРА на 0/1 — без нього вираз просто прибрав би ряд, і панель показала б «No data» замість «ні». Value mappings роблять з 0/1 текст. Якщо тут «НІ» — усі інші панелі дріфту показують СТАРІ значення, а не поточний стан: експортер свідомо не скидає drift_detected у 0 на порожньому вікні, бо дашборд, який зеленіє від відсутності даних, небезпечніший за червоний.",
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 5,
+        "x": 19,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "НІ — даних мало"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "так"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "current_window_size >= bool 30",
+          "legendFormat": "достатньо даних",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "state-timeline",
+      "title": "6. Дріфт по ознаках у часі (0 = норма, 1 = дріфт)",
+      "description": "Головна панель заняття. Кожен рядок — одна ознака, колір — стан drift_detected. Саме тут видно ПОРЯДОК, у якому ознаки червоніють після kubectl set env DRIFT_SHIFT=0.8: спершу ті, де зсув 0.8 найбільший відносно природного розкиду (petal_width, sepal_width), останнім — feature=\"prediction\" (хі-квадрат по класах, йому потрібно, щоб змінилися самі прогнози, а не тільки входи).\n\nПРО ПОЛЕ interval: тут стоїть ЛІТЕРАЛ \"1m\" (експортер перевіряє раз на 60 с, частіші точки — та сама величина, розмазана скрейпами). Поле interval панелі приймає лише літерал; $__rate_interval у ньому дає «Invalid interval string» і панель ламається цілком. Змінна $__rate_interval валідна ТІЛЬКИ всередині виразу (див. панелі 12-13).",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "interval": "1m",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "норма"
+                },
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "ДРІФТ"
+                }
+              }
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "drift_detected",
+          "legendFormat": "{{feature}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "7. p-value статистичних тестів (логарифмічна шкала)",
+      "description": "Що саме тут намальовано: для 4 числових ознак — p-value двовибіркового тесту Колмогорова-Смирнова (scipy.stats.ks_2samp) між еталоном (120 рядків train-split Iris) і поточним вікном; для feature=\"prediction\" — p-value хі-квадрата між еталонним і поточним розподілом класів. H0: «розподіли однакові». Малий p => H0 відкидаємо => дріфт.\n\nШКАЛА ЛОГАРИФМІЧНА НЕ ДЛЯ КРАСИ: на лінійній шкалі 0.9 і 1e-11 неможливо показати разом, і момент спрацювання виглядав би як вертикальна лінія в нуль. Заміряно на цьому стеку: норма дає p у діапазоні 0.1-0.9 (він ШУМИТЬ — під H0 p-value рівномірно розподілене, це нормально й не є ознакою проблеми), дріфт при DRIFT_SHIFT=0.8 — 1e-11 і нижче. Дев'ять порядків різниці.\n\nДВІ ЛІНІЇ ПОРОГУ. 0.05 — те, що в підручнику і на слайді. 0.01 — те, з чим реально порівнює експортер, і це ЗАМІРЯНО, а не смак: на 200 чистих вікнах по 3000 записів хі-квадрат хибно спрацьовував 12 разів (6%) при 0.05 і лише 4 рази (2%) при 0.01. При α=0.05 тест ПО ВИЗНАЧЕННЮ бреше у 5% випадків — за годину заняття це ~3 червоні панелі на чистих даних.\n\nЯКЩО ЛІНІЯ РАПТОМ ЗНИКЛА: хі-квадрат при сильному дріфті віддає рівно 0.0 (p недобрав до найменшого float), а нуль на логарифмічній шкалі не малюється. Це не пропуск даних — це найсильніший можливий сигнал.",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "p-value",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "поріг 0.01 (наш, заміряний)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "поріг 0.05 (підручниковий)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    4,
+                    8
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "asc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "drift_p_value",
+          "legendFormat": "{{feature}}",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "vector(0.01)",
+          "legendFormat": "поріг 0.01 (наш, заміряний)",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "vector(0.05)",
+          "legendFormat": "поріг 0.05 (підручниковий)",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "8. Стан ознак зараз (точні p-value)",
+      "description": "sort(drift_p_value) з instant=true: одна точка в часі, відсортована за зростанням p — найгірша ознака вгорі. Це та панель, з якої знімають ЧИСЛА для звіту, бо Stat і легенда timeseries округлюють. Кольор клітинки: червона, якщо p < 0.01 (той самий поріг, що в експортері). Трансформація organize прибирає колонку Time — у instant-запиті вона однакова для всіх рядків і лише займає місце.",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "color-text"
+            },
+            "filterable": false,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.01
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sort(drift_p_value)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{feature}}",
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "container": true,
+              "endpoint": true,
+              "instance": true,
+              "job": true,
+              "namespace": true,
+              "pod": true,
+              "service": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value": "p-value",
+              "feature": "Ознака"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "9. Розподіл класів у прогнозах (prediction drift)",
+      "description": "prediction_class_share — частка кожного класу Iris серед прогнозів у поточному вікні, сума завжди 1. Це і є Prediction Drift зі слайда 34: вхідні дані можуть навіть не виглядати дивно поокремо, але модель починає відповідати інакше. Заміряно на цьому стеку при DRIFT_SHIFT=0.8: setosa 0.335 -> 0.022, virginica 0.353 -> 0.626. Зсув +0.8 по всіх ознаках робить квітки «більшими», а більші квітки RandomForest вважає virginica — setosa на очах зникає зі стеку.",
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "частка прогнозів",
+            "drawStyle": "line",
+            "fillOpacity": 45,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prediction_class_share",
+          "legendFormat": "{{class}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "10. Відхилення частки класу від еталона",
+      "description": "prediction_class_share - scalar(1 / count(prediction_class_share)). Еталонна частка НЕ вписана руками як 0.333: count() сам рахує, скільки класів зараз є в метриці, і віддає 1/3 для трьох класів. Вписана константа розійшлася б з реальністю, щойно хтось змінить датасет або test_size — а помилка була б тихою, бо панель однаково щось малювала б. Це коректно саме тому, що train_test_split робився зі stratify => еталонні частки рівні. scalar() обовʼязковий: без нього PromQL шукає збіг лейблів між лівою й правою частиною і повертає порожньо.",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3,
+          "mappings": [],
+          "max": 0.5,
+          "min": -0.5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": -0.15
+              },
+              {
+                "color": "green",
+                "value": -0.05
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.15
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prediction_class_share - scalar(1 / count(prediction_class_share))",
+          "legendFormat": "{{class}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "11. Поточне вікно проти еталона",
+      "description": "Дві різні за природою величини на одній панелі — навмисно. reference_dataset_size = 120 і НІКОЛИ не змінюється: це рівно ті рядки train-split, на яких вчилася модель, вони зашиті в образ експортера (load_iris + train_test_split з тими самими аргументами, що в train.py Теми 8). current_window_size пульсує разом із трафіком. Урок: KS-тест порівнює 120 точок із ~3000, і це нормально — тест не вимагає однакових розмірів вибірок. Якщо жовта лінія падає на нуль, а зелена стоїть — проблема в трафіку або в Loki, а не в моделі.",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "записів",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "еталон (train-split, 120)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "current_window_size",
+          "legendFormat": "поточне вікно (10 хв)",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "reference_dataset_size",
+          "legendFormat": "еталон (train-split, 120)",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "12. Затримка /predict p95 (слайд 34)",
+      "description": "histogram_quantile(0.95, sum by (le) (rate(predict_latency_seconds_bucket[$__rate_interval]))) — метрика Теми 8, не експортера. Тут вона потрібна, щоб відповісти на питання «модель зламалась чи просто повільна»: дріфт даних НЕ мусить впливати на latency, і якщо червоніє і дріфт, і затримка одночасно — швидше за все ви дивитесь на інфраструктурну проблему (нода, throttling), а не на зміну даних. sum by (le) обовʼязковий: бакети додаються між репліками, готові квантилі — ні. $__rate_interval стоїть УСЕРЕДИНІ виразу, і це єдине місце, де він дозволений (у полі interval панелі він дав би «Invalid interval string»).",
+      "id": 12,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "секунд",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(predict_latency_seconds_bucket{namespace=\"ml-demo\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "13. Частка помилок і трафік моделі (слайд 34)",
+      "description": "Дві метрики Теми 8. Частка помилок = sum(rate(http_requests_total{status=~\"4..|5..\"})) / sum(rate(http_requests_total)): генератор навмисно шле 5% битих payload, тож базова лінія ~0.05, а НЕ нуль — рівний нуль тут означає, що трафіку немає взагалі. Трафік (запитів/с) виведений на праву вісь через override: без нього одна лінія в діапазоні 0-1 і друга в діапазоні 0-5 роблять графік нечитабельним. Навіщо трафік на дашборді дріфту: якщо панель 4 показує замале вікно, ця панель відповідає, чи винен генератор.",
+      "id": 13,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "частка помилок",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "трафік, запитів/с"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "запитів/с"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(http_requests_total{namespace=\"ml-demo\", status=~\"4..|5..\"}[$__rate_interval])) / sum(rate(http_requests_total{namespace=\"ml-demo\"}[$__rate_interval]))",
+          "legendFormat": "частка помилок",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(predict_requests_total{namespace=\"ml-demo\"}[$__rate_interval]))",
+          "legendFormat": "трафік, запитів/с",
+          "range": true
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "ml",
+    "mlops",
+    "goit",
+    "tema-9",
+    "drift"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Якість моделі — дріфт даних і прогнозів (Тема 9)",
+  "uid": "model-quality-drift",
+  "version": 1,
+  "weekStart": ""
+}

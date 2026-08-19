@@ -1,0 +1,514 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Моніторинг ML-сервісу ml-model (sklearn RandomForest, Iris) у namespace ml-demo. Панелі відповідають слайду 37 презентації Теми 8.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "1. Кількість запитів на передбачення",
+      "description": "Скільки передбачень за секунду обробляє сервіс. Метрика predict_requests_total — це Counter (тільки зростає), тому дивитись на неї напряму немає сенсу: rate() перетворює накопичений лічильник на швидкість. sum() складає всі репліки й усі класи в одну лінію. Якщо вимкнути генератор навантаження (kubectl scale deploy/load-generator --replicas=0), лінія згасне до нуля за одне вікно rate — це наочна демонстрація того, що rate() рахує по вікну, а не з початку часів.",
+      "id": 1,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "запитів/с",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(predict_requests_total{namespace=\"ml-demo\"}[$__rate_interval]))",
+          "legendFormat": "усі передбачення",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "2. Час відповіді /predict — середній і p95",
+      "description": "УВАГА, РОЗБІЖНІСТЬ ЗІ СЛАЙДОМ 37. Слайд пропонує avg(response_time_seconds) — такої метрики не існує, prometheus_client не має типу, який віддавав би готове середнє. Наш predict_latency_seconds — це Histogram, він віддає _bucket, _sum і _count. Середнє рахується як приріст суми секунд, поділений на приріст кількості запитів: rate(_sum)/rate(_count). Саме rate(), а не голе _sum/_count — інакше отримаєте середнє за весь час життя пода, яке ніколи не реагує на деградацію. Другий ряд — p95 з бакетів; він додається між репліками коректно, на відміну від Summary.",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "секунд",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(predict_latency_seconds_sum{namespace=\"ml-demo\"}[$__rate_interval])) / sum(rate(predict_latency_seconds_count{namespace=\"ml-demo\"}[$__rate_interval]))",
+          "legendFormat": "середній час",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(predict_latency_seconds_bucket{namespace=\"ml-demo\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "3. Помилки HTTP 4xx / 5xx",
+      "description": "Частота помилкових відповідей за секунду, розбита за кодом. 4xx — винен клієнт (генератор навантаження навмисно шле 5% битих payload, pydantic віддає 422), 5xx — винен сервіс. Якщо панель рівно нульова всю лекцію — це не «все добре», це означає, що ніхто не шле битих запитів і панель просто не перевірена.",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "помилок/с",
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (status) (rate(http_requests_total{namespace=\"ml-demo\", status=~\"4..|5..\"}[$__rate_interval]))",
+          "legendFormat": "HTTP {{status}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "4. Розподіл передбачених класів",
+      "description": "Скільки разів модель віддала кожен клас Iris за вибраний період. increase() по діапазону $__range замість голого значення лічильника — щоб цифри відповідали вибраному вгорі проміжку часу і переживали рестарт пода (increase сам обробляє скидання лічильника до нуля). Перекіс в один клас — перший сигнал data drift: або трафік змінився, або модель зламалась.",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (predicted_class) (increase(predict_requests_total{namespace=\"ml-demo\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{predicted_class}}",
+          "range": false
+        }
+      ]
+    },
+    {
+      "type": "heatmap",
+      "title": "5. Розподіл впевненості моделі (confidence)",
+      "description": "Гістограма predict_confidence у часі: вісь Y — межі бакетів впевненості, колір клітинки — скільки передбачень туди потрапило. Панель heatmap сама перетворює КУМУЛЯТИВНІ бакети Prometheus (le) на нормальний розподіл — тому тут не можна замінити її на bar chart без ручного віднімання сусідніх бакетів. ВАЖЛИВО: на чистому датасеті Iris RandomForest дає впевненість рівно 1.0 у 74% випадків, і вся картинка вироджується в один рядок угорі. Щоб панель показувала розподіл, генератор навантаження мусить слати зашумлені точки — це умова роботи панелі, а не косметика.",
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "cellValues": {
+          "unit": "short"
+        },
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Oranges",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto",
+          "value": "Кількість передбачень"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": true
+        },
+        "yAxis": {
+          "axisLabel": "Впевненість (confidence)",
+          "reverse": false,
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (le) (increase(predict_confidence_bucket{namespace=\"ml-demo\"}[5m]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "range": true
+        }
+      ],
+      "interval": "5m"
+    },
+    {
+      "type": "timeseries",
+      "title": "6a. CPU пода ml-model",
+      "description": "Реальне споживання CPU в ядрах, джерело — cAdvisor у складі kubelet (metrics-server у цьому кластері НЕМАЄ, тому kubectl top не працює, а ця панель працює). Фільтр container!=\"\" ОБОВ'ЯЗКОВИЙ: cAdvisor віддає ще й агрегат усього пода з порожньою міткою container, і без цього фільтра ви отримаєте рівно подвійний облік — класична помилка, через яку графік показує вдвічі більше, ніж є насправді.",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "ядер CPU",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"ml-demo\", pod=~\"ml-model.*\", container!=\"\", container!=\"POD\"}[$__rate_interval]))",
+          "legendFormat": "{{pod}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "6b. Пам'ять пода ml-model (working set)",
+      "description": "container_memory_working_set_bytes — саме та цифра, за якою kubelet вирішує вбити под по OOM, тому дивитись треба на неї, а не на container_memory_usage_bytes (та включає кеш сторінок і завжди завищена). Той самий обов'язковий фільтр container!=\"\" проти подвійного обліку. Орієнтир для ML-образу: sklearn + numpy + scipy займають ~250 MiB одразу після старту.",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "байт",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"ml-demo\", pod=~\"ml-model.*\", container!=\"\", container!=\"POD\"})",
+          "legendFormat": "{{pod}}",
+          "range": true
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "ml",
+    "mlops",
+    "goit",
+    "tema-8"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ML-модель — моніторинг (Iris RandomForest)",
+  "uid": "ml-model-monitoring",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,47 @@
+# values.yaml — ЗНАЧЕННЯ за замовчуванням (слайд 28).
+#
+# Це і є вся суть Helm: шаблони в templates/ не містять конкретних чисел
+# і рядків — вони беруть їх звідси через {{ .Values.<шлях> }}.
+#
+# Перевизначити можна трьома способами:
+#   helm install ... -f values-prod.yaml        ← інший файл цілком
+#   helm install ... --set replicaCount=5       ← одне значення
+#   helm install ... --set-string page.title=Hi ← примусово як рядок
+
+# Скільки реплік тримати.
+replicaCount: 2
+
+image:
+  # public.ecr.aws, а не Docker Hub: на занятті вся група виходить в інтернет
+  # через один NAT кластера, а Docker Hub ріже анонімні pull'и за IP
+  # (100 за 6 годин) -> ImagePullBackOff у половини групи.
+  repository: public.ecr.aws/nginx/nginx
+  tag: "1.29-alpine"
+  # IfNotPresent — качати образ, лише якщо його ще немає на ноді.
+  # Always — качати завжди (потрібно, якщо ви перезаписуєте тег :latest).
+  pullPolicy: IfNotPresent
+
+service:
+  # ClusterIP — дивимось через port-forward, щоб не платити за Load Balancer.
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# ── Вміст сторінки ────────────────────────────────────────────────────────
+# Саме ці значення роблять Helm-деплой візуально відмінним від інших.
+# Спробуйте на парі: helm upgrade ... --set page.accent="#C62828"
+page:
+  accent: "#0F1689" # фірмовий темно-синій Helm
+  number: "2"
+  title: "Helm"
+  lines:
+    - "Мене <strong>згенеровано з шаблону</strong>, а не написано руками."
+    - "Значення приїхали з <code>values.yaml</code>."
+    - "Той самий чарт + інший values = інший стенд. Копіювати YAML не треба."

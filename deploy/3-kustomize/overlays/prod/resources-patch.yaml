@@ -1,0 +1,24 @@
+# Патч. Це НЕ повний Deployment — тут лише те, що змінюємо.
+# Kustomize зіллє його з базовим deployment.yaml.
+#
+# Обовʼязкові поля — тільки ті, за якими Kustomize знайде ціль
+# (apiVersion, kind, metadata.name) і «шлях» до місця зміни.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+spec:
+  template:
+    spec:
+      containers:
+        # ⚠️ `name` тут — це КЛЮЧ для пошуку елемента в списку, а не зміна.
+        # Kustomize знайде контейнер із name: nginx і змінить у ньому resources.
+        # Помилитесь в імені — Kustomize мовчки ДОДАСТЬ другий контейнер.
+        - name: nginx
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

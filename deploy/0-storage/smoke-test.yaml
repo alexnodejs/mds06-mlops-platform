@@ -1,0 +1,49 @@
+# smoke-test.yaml — 40 секунд, які доводять, що сховище справді працює.
+# Окремий файл від StorageClass НАВМИСНО: SC живе в кластері постійно, а це —
+# одноразовий тест із платним диском. В одному файлі кожен `kubectl apply -f`
+# тихо створював би зайвий 1 GiB gp3.
+#
+#   kubectl apply -f deploy/0-storage/smoke-test.yaml
+#   kubectl get pvc gp3-smoke -w      # Pending -> Bound за ~15 c
+#   kubectl logs pod/gp3-smoke        # має вивести: ok
+#   kubectl delete -f deploy/0-storage/smoke-test.yaml   # 🔴 ПРИБРАТИ!
+#
+# ДІАГНОСТИКА, яку варто показати студентам:
+#   kubectl describe pvc gp3-smoke
+# На gp3 у Events відразу зʼявляться Provisioning / ProvisioningSucceeded від
+# ebs.csi.aws.com. На мертвому gp2 там ТИША — ні ProvisioningFailed, ні згадки
+# провізіонера. Тиша в Events = ніхто не взявся за роботу.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gp3-smoke
+spec:
+  # storageClassName свідомо НЕ вказано: так тест перевіряє ще й те, що
+  # дефолтний клас справді перемкнувся з gp2 на gp3.
+  accessModes: ["ReadWriteOnce"] # EBS вміє тільки RWO, не RWX
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gp3-smoke
+spec:
+  restartPolicy: Never
+  containers:
+    - name: writer
+      # public.ecr.aws, а не Docker Hub — немає rate limit і не потрібен secret.
+      image: public.ecr.aws/docker/library/busybox:1.37
+      command: ["sh", "-c", "echo ok > /data/ok && cat /data/ok && sleep 300"]
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { memory: 32Mi }
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: gp3-smoke

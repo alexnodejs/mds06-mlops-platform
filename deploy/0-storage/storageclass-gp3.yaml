@@ -1,0 +1,80 @@
+# StorageClass, який РЕАЛЬНО працює на Kubernetes 1.34.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# НАВІЩО ЦЕЙ ФАЙЛ ІСНУЄ
+# ═══════════════════════════════════════════════════════════════════════════
+# EKS створює StorageClass "gp2" автоматично, і він виглядає робочим:
+#
+#   $ kubectl get sc
+#   NAME            PROVISIONER             ...
+#   gp2 (default)   kubernetes.io/aws-ebs   ...
+#
+# Але provisioner `kubernetes.io/aws-ebs` — це IN-TREE плагін, який ВИЛУЧЕНО
+# з Kubernetes у версії 1.31. Наш кластер на 1.34, тобто обробляти цей
+# StorageClass уже нікому.
+#
+# Симптом: PersistentVolumeClaim назавжди лишається в Pending, а под, який
+# його чекає, — теж. У `kubectl describe pvc` НЕ буде зрозумілої помилки,
+# бо помилку нікому й видати: контролера, який відповідає за цей
+# provisioner, у кластері фізично немає.
+#
+# Саме тому в Темах 5-8 весь стек ішов із persistence.enabled=false. Для
+# Prometheus це прийнятно (метрики за 12 годин), а для MinIO і PostgreSQL,
+# де лежать артефакти й історія експериментів, — ні: перший рестарт пода
+# знищив би всю роботу студента.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# ПОРЯДОК ЗАСТОСУВАННЯ
+# ═══════════════════════════════════════════════════════════════════════════
+#   1) terraform apply           <- addon aws-ebs-csi-driver МУСИТЬ бути вже
+#                                   встановлений, інакше цей SC теж не працює
+#   2) kubectl annotate storageclass gp2 \
+#        storageclass.kubernetes.io/is-default-class-      <- знімає дефолт
+#   3) kubectl apply -f deploy/0-storage/storageclass-gp3.yaml
+#   4) kubectl get sc            <- рівно ОДИН рядок містить "(default)"
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    # Дефолтний клас: PVC без storageClassName приходить сюди.
+    # Це критично для Helm-чартів MinIO і PostgreSQL — у них
+    # persistence.storageClass не заданий, і без дефолту вони нічого не отримають.
+    #
+    # ⚠️ ДВА дефолтних StorageClass одночасно = невизначена поведінка,
+    # Kubernetes обере довільний. Тому крок (2) вище обовʼязковий.
+    storageclass.kubernetes.io/is-default-class: "true"
+
+# ⭐ Ось цей рядок і є вся суть виправлення: CSI-драйвер замість in-tree.
+provisioner: ebs.csi.aws.com
+
+# Delete = диск помирає разом із PVC. Для навчального кластера правильно:
+# інакше після кожного заняття лишаються осиротілі томи, які тихо горять
+# у рахунку. (Ми вже знайшли 40 GiB таких, що жили три місяці.)
+# У проді ставлять Retain, щоб випадкове видалення PVC не знищило дані.
+reclaimPolicy: Delete
+
+# Дозволяє збільшити диск через `kubectl edit pvc`. Зменшити — не можна нікому.
+allowVolumeExpansion: true
+
+# 🔴 НАЙВАЖЛИВІШИЙ РЯДОК ДЛЯ БАГАТОЗОННОГО КЛАСТЕРА.
+#
+# EBS-диск існує в ОДНІЙ зоні доступності й не може переїхати в іншу.
+# Immediate: диск створюється одразу при появі PVC, ще до того, як Scheduler
+# обрав ноду. Диск може виявитись у eu-central-1a, а місце для пода — лише
+# в 1b, і под зависне назавжди з "volume node affinity conflict".
+#
+# WaitForFirstConsumer: спершу Scheduler обирає ноду, і лише потім у ТІЙ
+# САМІЙ зоні створюється диск. У нас 3 ноди у 2 зонах — без цього рядка
+# збій гарантований рано чи пізно.
+volumeBindingMode: WaitForFirstConsumer
+
+parameters:
+  # gp3 замість gp2: дешевший на ~20% і дає 3000 IOPS базово,
+  # тоді як у gp2 IOPS залежать від розміру диска (3 IOPS на GiB —
+  # на 8 GiB це лише 24 IOPS, чого PostgreSQL не пережив би).
+  type: gp3
+  # Шифрування диска. Вимикати немає причин — воно безкоштовне.
+  encrypted: "true"
+  fsType: ext4

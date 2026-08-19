@@ -1,0 +1,69 @@
+# ══════════════════════════════════════════════════════════════════════════
+# КАНОНІЧНИЙ Job тренування. ОДИН файл — ТРИ споживачі:
+#
+#   1. `make train`             — envsubst підставляє змінні, kubectl створює Job
+#   2. Тема 10, Step Functions  — terraform читає цей самий файл через
+#                                 yamldecode() і вставляє в крок eks:runJob.sync
+#   3. `make up`                — разовий прогін, щоб MLflow не був порожній
+#
+# Раніше цей Job збирався ДВІЧІ й по-різному: `kubectl create job --dry-run`
+# з подальшою правкою YAML через python у train.sh, і ще раз таким самим
+# способом у deploy-all.sh. Два джерела правди на один об'єкт розійшлись би
+# при першій же зміні.
+#
+# ⚠️ ArgoCD цей файл НЕ синкає (для нього немає Application) — і навмисно:
+# тренування запускають ПОДІЄЮ, а не тим фактом, що воно лежить у Git.
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: mlflow
+spec:
+  # Job прибереться сам через 30 хвилин після завершення. Без цього рядка
+  # завершені Job накопичуються назавжди: `kubectl get job` за місяць занять
+  # видає сотню рядків, а поди тримають місце в etcd.
+  # ⚠️ 1800 c, а не менше: Step Functions читає статус Job вже ПІСЛЯ
+  # завершення, і зникла раніше сутність дала б помилку "job not found".
+  ttlSecondsAfterFinished: 1800
+  # Одна спроба. Тренування детерміноване: якщо впало — впаде і вдруге, а
+  # backoffLimit > 0 просто ховає причину під ще одним подом.
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: train
+          image: ${TRAINER_IMAGE}
+          command: ["python", "train.py"]
+          envFrom:
+            # Дає MLFLOW_S3_ENDPOINT_URL, AWS_* — без них log_artifact у MinIO
+            # падає з "Unsupported URI scheme s3".
+            - secretRef:
+                name: mlflow-credentials
+          env:
+            # ⚠️ Порт 80, а не 5000: Service mlflow слухає 80 і проксює на 5000.
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.mlflow.svc.cluster.local:80
+            - name: MLFLOW_EXPERIMENT_NAME
+              value: "${EXPERIMENT}"
+            - name: GRID_N_ESTIMATORS
+              value: "${GRID_N_ESTIMATORS}"
+            - name: GRID_MAX_DEPTH
+              value: "${GRID_MAX_DEPTH}"
+            # "true"  — найкраща модель одразу стає @champion (звичайний
+            #           ручний запуск, Тема 9)
+            # "false" — модель лише реєструється НОВОЮ версією без аліаса;
+            #           рішення про промоцію ухвалює quality gate у
+            #           Step Functions (Тема 10)
+            - name: PROMOTE_TO_CHAMPION
+              value: "${PROMOTE_TO_CHAMPION}"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              # ліміту CPU навмисно немає: тренування коротке, а ліміт лише
+              # розтягнув би його тротлінгом. Пам'ять обмежуємо — витік
+              # памʼяті має вбити под, а не ноду.
+              memory: 1Gi

@@ -1,0 +1,147 @@
+# MinIO — S3-сумісне сховище артефактів MLflow (слайд 21: розгортаємо
+# В КЛАСТЕРІ, окремим ArgoCD Application, а не беремо справжній AWS S3).
+#
+# ЧАРТ НАВМИСНО «ЗАСТАРІЛИЙ». minio 5.4.0 — остання версія чарта (індекс не
+# оновлювався з 2025-01-03), і вона пінить образ RELEASE.2024-12-18, де
+# веб-консоль ще ПОВНА. У релізах MinIO після ~2025-04 адмін-функції консолі
+# (керування бакетами, політиками, користувачами, lifecycle, реплікація)
+# вирізано в платний AIStor — лишився object browser. Тобто «застарілість»
+# тут ПЕРЕВАГА: НЕ підіймайте image.tag, бо втратите UI, який студенти
+# мають побачити на слайдах 31-33.
+#
+# BUCKET СТВОРЮЄТЬСЯ ДЕКЛАРАТИВНО, а не руками в UI: чарт вішає на свій
+# post-install Job (образ mc) анотацію helm.sh/hook: post-install,post-upgrade,
+# і ArgoCD перетворює її на PostSync-хук. Тобто app-minio НЕ стає Healthy,
+# поки bucket mlflow-artifacts не створено — MLflow у наступній хвилі
+# гарантовано не отримає NoSuchBucket.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio
+  namespace: argocd
+  annotations:
+    # Хвиля 0: сховище і БД — фундамент, підіймаються ПАРАЛЕЛЬНО з postgres
+    # (вони незалежні). Хвилі працюють, коли ці Application синкає
+    # батьківський app-of-apps; при ручному kubectl apply вони лишаються
+    # документацією порядку.
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    # Видалення Application -> каскадне видалення всіх його ресурсів.
+    # УВАГА: PVC при цьому теж піде, а разом з ним і артефакти.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.min.io/
+    chart: minio
+    targetRevision: 5.4.0
+    helm:
+      # releaseName МУСИТЬ бути "minio": від Release.Name залежить ім'я
+      # сервісу, а MLFLOW_S3_ENDPOINT_URL уже прибитий до
+      # minio.mlflow.svc.cluster.local:9000.
+      releaseName: minio
+      valuesObject:
+        # Дефолт чарта — distributed + replicas: 16. У 2 x t3.medium це не
+        # влізе НІКОЛИ. standalone -> один Deployment, один под.
+        mode: standalone
+        replicas: 1
+
+        # ОБОВ'ЯЗКОВО. Дефолт — RollingUpdate {maxUnavailable: 0, maxSurge: 100%},
+        # а том у нас RWO (EBS). Kubernetes спробує підняти НОВИЙ под, поки
+        # старий ще тримає диск -> Multi-Attach error, новий под вічно в
+        # ContainerCreating, старий вічно в Terminating. Взаємне блокування.
+        # Це стосується будь-якого Deployment із RWO PVC, MinIO тут просто
+        # перший, на кому це видно.
+        deploymentUpdate:
+          type: Recreate
+
+        # Чарт читає з цього об'єкта рівно два ключі — rootUser і той, що з
+        # паролем: і як змінні оточення MINIO_ROOT_* у Deployment, і як файли
+        # /config/rootUser у post-install Job з mc. Імена ключів зашиті в
+        # шаблони чарта, перейменувати не можна — перелік у
+        # k8s/secret-example.yaml (Example).
+        existingSecret: mlflow-credentials
+
+        persistence:
+          enabled: true
+          # 8Gi: артефакти Iris — це кілобайти, але EBS менше 1Gi не буває,
+          # а gp3 коштує $0.0952/GiB-міс => 8Gi ≈ $0.76/міс ≈ 2.5 центи/добу.
+          # Економити тут нема на чому, а запас дає місце під Evidently-звіти.
+          size: 8Gi
+          # МУСИТЬ існувати і сидіти на ebs.csi.aws.com. Єдиний клас, який
+          # EKS створює сам, — gp2 на ВИЛУЧЕНОМУ in-tree провізіонері
+          # kubernetes.io/aws-ebs (його немає в Kubernetes з 1.31, а кластер
+          # на 1.34), тому PVC на gp2 висить у Pending НАЗАВЖДИ і в його
+          # Events НЕМАЄ ЖОДНОЇ згадки провізіонера — тиша = ніхто не взявся.
+          # Порядок: terraform apply (addon aws-ebs-csi-driver) ->
+          # зняти дефолт з gp2 -> kubectl apply storageclass-gp3.yaml.
+          storageClass: gp3
+
+        # ОБОВ'ЯЗКОВО. Дефолт чарта — resources.requests.memory: 16Gi
+        # (розрахований на bare-metal). Allocatable на t3.medium ~3.2 GiB,
+        # тобто жодна нода НІКОЛИ не підійде і под вічно Pending.
+        # Обґрунтування наших чисел: MinIO standalone у спокої тримає
+        # ~180-250 MiB RSS, під час log_model додаються буфери multipart
+        # upload -> 512Mi requests / 1Gi limits дають реальний запас.
+        # Загальне правило: ЧИТАЙТЕ дефолтні requests чужого чарта ПЕРЕД
+        # деплоєм: helm show values minio-official/minio --version 5.4.0
+        resources:
+          requests: { cpu: 100m, memory: 512Mi }
+          limits: { memory: 1Gi }
+
+        # Той самий bucket, що в контракті: s3://mlflow-artifacts/
+        buckets:
+          - name: mlflow-artifacts
+            policy: none # приватний; доступ лише по root-креденшелах
+            purge: false # НЕ чистити при повторному синку — там артефакти
+
+        # 128Mi для транзієнтного пода з mc — дефолт чарта, лишаємо.
+        # Живе ~10 секунд і зникає, але слот пода йому потрібен реальний.
+        makeBucketJob:
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+
+        # 🔴 ДЕФОЛТ ЧАРТА СТВОРЮЄ ЗАЙВОГО КОРИСТУВАЧА console/console123
+        # (дивіться `helm show values` — креденшели зашиті просто в values).
+        # Прибираємо: root-акаунта достатньо, а зайвий вхід у консоль з
+        # відомим усьому інтернету паролем — поганий приклад для курсу.
+        users: []
+        policies: []
+        svcaccts: []
+
+        # Метрики MinIO НЕ вмикаємо, і це свідоме рішення, а не забудькуватість.
+        # Контракт Теми 9 вимагає шість метрик дріфту (їх дає drift-exporter),
+        # а latency/error rate зі слайда 34 уже приходять з моделі Теми 8.
+        # Ціна вмикання висока: у чарті 5.4.0 ServiceMonitor рендериться лише
+        # при includeNode: true, а метрики кластера їдуть через ще один CRD
+        # (kind: Probe), який вимагає probeSelectorNilUsesHelmValues: false
+        # у kube-prometheus-stack. Плюс additionalLabels: {release: monitoring}
+        # дав би ДУБЛЬОВАНИЙ ключ release у labels (чарт уже рендерить
+        # release: {{ .Release.Name }}). Треба буде — вмикається двома рядками:
+        #   metrics.serviceMonitor: { enabled: true, includeNode: true }
+        metrics:
+          serviceMonitor:
+            enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Лікує "metadata.annotations: Too long: may not be more than 262144
+      # bytes" (граблі №2) — client-side apply зберігає весь маніфест
+      # в анотацію last-applied-configuration.
+      - ServerSideApply=true
+    # Без retry automated sync НЕ повторює невдалу спробу для тієї самої
+    # ревізії, і застосунок лишається червоним назавжди. Тут це критично:
+    # PVC на gp3 із volumeBindingMode: WaitForFirstConsumer стає Bound не
+    # мгновенно, а post-install Job з mc чекає, поки MinIO почне слухати.
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

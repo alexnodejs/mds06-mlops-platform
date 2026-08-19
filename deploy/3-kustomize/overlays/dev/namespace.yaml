@@ -1,0 +1,12 @@
+# Kustomize проставляє namespace у метадані ресурсів, але САМ namespace
+# не створює. Тому оголошуємо його явно — так `kubectl apply -k overlays/dev`
+# працює з чистого кластера, без попереднього `kubectl create namespace`.
+#
+# namePrefix: dev- на обʼєкт Namespace не діє — Kustomize це враховує.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-dev
+  labels:
+    lesson: topic-6
+    method: kustomize

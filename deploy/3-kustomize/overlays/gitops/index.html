@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <title>Спосіб 4 — ArgoCD / GitOps</title>
+  <style>
+    body{margin:0;height:100vh;display:grid;place-items:center;
+         font-family:system-ui,-apple-system,sans-serif;
+         background:#EF7B4D;color:#fff;text-align:center}
+    .n{font-size:clamp(4rem,14vw,9rem);font-weight:800;line-height:.9;opacity:.35}
+    h1{font-size:clamp(1.6rem,5vw,3rem);margin:.1em 0 .3em}
+    p{font-size:clamp(1rem,2.4vw,1.35rem);opacity:.95;max-width:36ch;margin:.4em auto;line-height:1.5}
+    code{background:rgba(0,0,0,.28);padding:.15em .45em;border-radius:4px;font-size:.9em}
+    .meta{margin-top:2em;font-size:.85rem;opacity:.65}
+  </style>
+</head>
+<body>
+  <div>
+    <div class="n">4</div>
+    <h1>ArgoCD · GitOps</h1>
+    <p>Мене <strong>ніхто не деплоїв руками</strong>.</p>
+    <p>ArgoCD прочитав цей файл із Git і сам застосував його в кластер.</p>
+    <p>Змініть цей текст, зробіть <code>git push</code> — і сторінка
+       оновиться сама, без жодної команди <code>kubectl</code>.</p>
+    <p class="meta">namespace: demo-gitops · джерело істини: Git</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,58 @@
+# Дріфт-експортер із цього ж репозиторію (GitOps): Deployment + Service +
+# ServiceMonitor із теки k8s/. Це та сама стрілка «-> Prometheus» зі слайда 35,
+# лише зі scipy.stats у ролі «аналізує» замість Evidently — детальне
+# обґрунтування у шапці k8s/drift-exporter.yaml.
+#
+# ХВИЛЯ 3 — остання. Формально експортер незалежний (еталон у образі, вікно
+# з Loki, жодного PVC і жодних креденшелів), тобто піднявся б і першим. Але
+# ставимо його в кінець свідомо: так UI ArgoCD читається як розповідь
+# «сховище -> база -> трекінг -> моніторинг трекінгу», і на демо не треба
+# пояснювати, чому панелі дріфту вже щось малюють, поки MLflow ще Init.
+#
+# ЩО ЦЕЙ Application ВИМАГАЄ ЗЗОВНІ:
+#  1) CRD monitoring.coreos.com (ServiceMonitor) — приносить kube-prometheus-stack
+#     Теми 8. Тому redeploy.sh Теми 8 запускається ПЕРЕД цим стеком (граблі №4).
+#  2) Loki на loki.logging.svc.cluster.local:3100 — теж Тема 8.
+#  3) Образ mds06-mlflow-tools:v1 в ECR (нода тягне без секрета, у неї
+#     AmazonEC2ContainerRegistryReadOnly). Збірка ТІЛЬКИ
+#     docker buildx --platform linux/amd64: Mac розробника ARM, ноди x86_64,
+#     інакше под падає з 'exec format error'.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: drift-exporter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    # Видалення Application -> каскадне видалення всіх його ресурсів.
+    # Тут це безпечно: у експортера немає стану взагалі.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    path: k8s/drift-exporter
+    # kustomization.yaml у k8s/ ArgoCD знаходить сам — блок kustomize не
+    # потрібен. У ньому ж стоїть тег образу (images.newTag), тож підняти
+    # версію експортера = один рядок у Git, і ArgoCD зробить решту.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # граблі №2: "metadata.annotations: Too long"
+    # Граблі №4: без retry перший синк, що застав кластер без CRD
+    # ServiceMonitor, лишає застосунок червоним НАЗАВЖДИ для цієї ревізії —
+    # automated sync сам не повторює.
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

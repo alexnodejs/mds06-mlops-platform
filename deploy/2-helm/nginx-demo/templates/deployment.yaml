@@ -1,0 +1,58 @@
+{{/* Порівняйте з deploy/1-kubectl/02-deployment.yaml — там усі числа зашиті. */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nginx-demo.fullname" . }}
+  labels:
+    {{- include "nginx-demo.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    matchLabels:
+      {{- include "nginx-demo.selectorLabels" . | nindent 6 }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "nginx-demo.selectorLabels" . | nindent 8 }}
+      annotations:
+        # ⭐ БЕЗ ЦЬОГО РЯДКА ДЕМО НЕ ПРАЦЮВАТИМЕ.
+        #
+        # Kubernetes не перезапускає поди, коли змінився лише ConfigMap.
+        # Тобто `helm upgrade --set page.accent="#C62828"` оновив би ConfigMap,
+        # Helm сказав би "upgraded", а в браузері нічого б не змінилось —
+        # старі поди тримають стару сторінку.
+        #
+        # Рішення: рахуємо хеш від відрендереного configmap.yaml і кладемо
+        # в анотацію пода. Змінився HTML -> змінився хеш -> змінився шаблон
+        # пода -> Deployment робить rolling update. Стандартний прийом Helm.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: nginx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+
+          # toYaml перетворює цілу гілку values на YAML,
+          # nindent 12 — робить відступ у 12 пробілів з переносом рядка.
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+
+      volumes:
+        - name: html
+          configMap:
+            name: {{ include "nginx-demo.fullname" . }}-html

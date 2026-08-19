@@ -1,0 +1,37 @@
+# OVERLAY gitops — той самий base, але цей overlay застосовуємо НЕ руками.
+# Його читає ArgoCD прямо з Git (спосіб 4).
+#
+# Важлива думка для студентів: GitOps — це не інший формат пакування.
+# Це інший СПОСІБ ДОСТАВКИ. Файли ті самі, що й у dev/prod —
+# змінюється лише те, хто виконує apply: людина чи контролер у кластері.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+namespace: demo-gitops
+namePrefix: gitops-
+
+# Мітки на всі ресурси. Зручно для `kubectl get all -l env=gitops`.
+# includeTemplates: true ОБОВʼЯЗКОВЕ: без нього мітка потрапляє лише в
+# metadata самого Deployment, а в spec.template.metadata.labels (тобто в
+# поди) — ні, і `kubectl get pods -l env=gitops` поверне "No resources found".
+# Селектор Kustomize не чіпає (includeSelectors за замовчуванням false) —
+# і добре, бо selector у Deployment незмінний після створення.
+labels:
+  - includeTemplates: true
+    pairs:
+      env: gitops
+
+replicas:
+  - name: nginx-demo
+    count: 2
+
+configMapGenerator:
+  - name: nginx-html
+    behavior: replace
+    files:
+      - index.html

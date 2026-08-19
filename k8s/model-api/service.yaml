@@ -1,0 +1,18 @@
+# ClusterIP 80 -> 8000. Порт ОБОВ'ЯЗКОВО іменований: ServiceMonitor
+# посилається на ІМ'Я порту Service, з безіменним портом таргет не з'явиться.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-model
+  namespace: ml-demo
+  labels:
+    app: ml-model            # за цим лейблом Service шукає ServiceMonitor
+spec:
+  type: ClusterIP
+  selector:
+    app: ml-model
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
