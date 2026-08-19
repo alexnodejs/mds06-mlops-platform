@@ -80,17 +80,24 @@
 | Ресурс | Ціна | За годину |
 |---|---|---|
 | EKS control plane | $0.10 / год за кластер | **$0.100** |
-| 2 × `t3.medium` (On-Demand) | $0.0456 / год кожен | **$0.091** |
+| 3 × `t3.medium` (On-Demand) | $0.0456 / год кожен | **$0.137** |
 | NAT Gateway | $0.052 / год + трафік | **$0.052** |
 | Classic Load Balancer (зʼявиться в кроці 10) | $0.030 / год + трафік | **$0.030** |
-| EBS-диски нод (2 × 20 GiB gp3) | ~$0.095 / GiB-міс | **$0.005** |
-| | **РАЗОМ** | **≈ $0.28 / год** |
+| EBS-диски нод (3 × 20 GiB gp3) | ~$0.095 / GiB-міс | **$0.008** |
+| | **РАЗОМ** | **≈ $0.33 / год** |
 
 | Скільки протримати | Рахунок |
 |---|---|
-| Пара 3 години | **≈ $0.85** |
-| Забули вимкнути на добу | ≈ $6.70 |
-| Забули вимкнути на місяць | **≈ $200** 😱 |
+| Пара 3 години | **≈ $1.00** |
+| Забули вимкнути на добу | ≈ $7.85 |
+| Забули вимкнути на місяць | **≈ $235** 😱 |
+
+> **Чому 3 ноди, а не 2.** `node_desired_size` за замовчуванням `3`, бо повний
+> стек курсу (Теми 8–9) не влазить у 34 слоти подів на двох `t3.medium` —
+> арифметика в коментарі до змінної у
+> [`variables.tf`](../terraform/cluster/variables.tf). Якщо ви робите **лише**
+> Тему 5, третя нода не потрібна: `terraform apply -var node_desired_size=2`,
+> і рахунок падає до ≈ $0.28/год.
 
 > ### 🔴 ГОЛОВНЕ ПРАВИЛО
 > **`terraform destroy` наприкінці заняття — обовʼязково.**
@@ -230,7 +237,7 @@ tfenv завантажує архів з `releases.hashicorp.com` і **звір�
 
 ### 2.4. Файл `.terraform-version` — головна фішка
 
-У теці `terraform/` лежить файл з єдиним рядком:
+У теці `terraform/cluster/` лежить файл з єдиним рядком:
 
 ```
 1.15.8
@@ -239,7 +246,7 @@ tfenv завантажує архів з `releases.hashicorp.com` і **звір�
 Завдяки йому **нікому не треба нічого памʼятати**. Студент клонує репозиторій і:
 
 ```bash
-cd terraform
+cd terraform/cluster
 tfenv install    # без аргументу — прочитає .terraform-version
 ```
 
@@ -247,14 +254,14 @@ tfenv install    # без аргументу — прочитає .terraform-ver
 що виставлено глобально. Побачити це можна так:
 
 ```bash
-cd terraform && terraform version   # 1.15.8
-cd ..        && terraform version   # ваша глобальна версія
+cd terraform/cluster && terraform version   # 1.15.8
+cd ../..             && terraform version   # ваша глобальна версія
 ```
 
 При `tfenv use` він навіть попереджає:
 
 ```
-tfenv: Default version file overridden by .../terraform/.terraform-version,
+tfenv: Default version file overridden by .../terraform/cluster/.terraform-version,
        changing the default version has no effect
 ```
 
@@ -284,24 +291,38 @@ tfenv install latest-allowed   # ...поставити максимум, яки�
 
 ## 3. Структура проєкту
 
+Увесь курс (Теми 5–10) живе в **одному** репозиторії
+`https://github.com/alexnodejs/mds06-mlops-platform.git`. До Теми 5 стосується
+ось це:
+
 ```
-mds06-kuber-from-scratch/
-├── README.md                  ← ви тут
+mds06-mlops-platform/
+├── README.md                  ← мапа занять і швидкий старт
+├── Makefile                   ← одна точка входу: `make help`
 ├── .gitignore                 ← що НЕ комітити (найважливіше — *.tfstate)
 ├── terraform/
-│   ├── .terraform-version     ← 1.15.8, читає tfenv
-│   ├── versions.tf            ← які версії Terraform і провайдерів
-│   ├── variables.tf           ← «ручки», які можна крутити
-│   ├── main.tf                ← що саме створюємо в AWS
-│   ├── ebs-csi-iam.tf         ← IAM-роль для драйвера дисків (розділ 6.5)
-│   └── outputs.tf             ← що показати в кінці
+│   ├── cluster/               ← ТЕМА 5: усе, про що цей гайд
+│   │   ├── .terraform-version ← 1.15.8, читає tfenv
+│   │   ├── versions.tf        ← які версії Terraform і провайдерів
+│   │   ├── variables.tf       ← «ручки», які можна крутити
+│   │   ├── main.tf            ← що саме створюємо в AWS
+│   │   ├── ebs-csi-iam.tf     ← IAM-роль для драйвера дисків (розділ 6.5)
+│   │   └── outputs.tf         ← що показати в кінці
+│   └── training-pipeline/     ← Тема 10, окремий стейт, окремий apply
 ├── deploy/
-│   └── 0-storage/             ← StorageClass gp3: це Kubernetes, не AWS,
-│       ├── storageclass-gp3.yaml       тому kubectl, а не Terraform
-│       └── smoke-test.yaml    ← 40-секундна перевірка, що диски справді дають
-└── k8s/
-    └── nginx.yaml             ← тестовий застосунок для Kubernetes
+│   ├── 0-storage/             ← StorageClass gp3: це Kubernetes, не AWS,
+│   │   ├── storageclass-gp3.yaml       тому kubectl, а не Terraform
+│   │   └── smoke-test.yaml    ← 40-секундна перевірка, що диски справді дають
+│   └── 1-kubectl/ 2-helm/ 3-kustomize/ 4-argocd/   ← Тема 6
+├── apps/  k8s/  argocd/  lambdas/                  ← Теми 6, 8, 9, 10
+├── scripts/                   ← те, що викликає Makefile
+└── docs/                      ← ви тут: docs/05-eks-terraform.md
 ```
+
+**Два окремі Terraform-проєкти, а не один.** У `terraform/cluster/` і
+`terraform/training-pipeline/` свої `terraform.tfstate`, свої `init`/`apply`.
+Так зроблено навмисно: пайплайн Теми 10 змінюють часто, а кластер — ні, і
+зламаний `apply` пайплайна не має жодного шансу зачепити VPC чи node group.
 
 **Чому файлів кілька, а не один?** Для Terraform це не має жодного значення —
 він склеює **всі** `.tf`-файли в теці в один конфіг перед виконанням. Розбиття
@@ -318,7 +339,7 @@ mds06-kuber-from-scratch/
 
 ```hcl
 terraform {
-  required_version = "~> 1.15"
+  required_version = "~> 1.15.0"
 
   required_providers {
     aws = {
@@ -332,10 +353,32 @@ terraform {
 | Рядок | Що робить | Що буде, якщо прибрати |
 |---|---|---|
 | `terraform { }` | блок налаштувань самого Terraform (не хмари) | — |
-| `required_version = "~> 1.15"` | мінімальна версія бінарника | на Terraform 1.5 конфіг мовчки запуститься і впаде посеред `apply` з незрозумілою помилкою |
+| `required_version = "~> 1.15.0"` | діапазон версій бінарника: `>= 1.15.0, < 1.16.0` | на Terraform 1.5 конфіг мовчки запуститься і впаде посеред `apply` з незрозумілою помилкою |
 | `required_providers { }` | список плагінів для завантаження | Terraform не зрозуміє слово `aws` |
 | `source = "hashicorp/aws"` | скорочення для `registry.terraform.io/hashicorp/aws` | — |
 | `version = "~> 6.52"` | пін версії провайдера | завтра вийде 7.0 з breaking changes і зламає ваш проєкт без жодних змін у коді |
+
+### 🔴 Чому саме `~> 1.15.0`, а не `~> 1.15`
+
+Третя цифра тут не педантизм, а захист від сценарію, який паралізує всю групу.
+
+`~> 1.15` дозволяє **1.16 і 1.17**. Terraform при кожному `apply` піднімає поле
+`version` усередині `terraform.tfstate` до версії того, хто цей `apply` зробив,
+і **назад його не відкотити**. Один студент оновив бінарник, зробив `apply` —
+і всі інші отримують:
+
+```
+Error: Unsupported state file format
+
+state snapshot was created by Terraform v1.16.0, which is newer than current
+v1.15.8; upgrade to Terraform v1.16.0 or greater to work with this state
+```
+
+Причому не тільки на `apply` — навіть `terraform plan` більше не працює.
+
+`~> 1.15.0` = `>= 1.15.0, < 1.16.0`: патчі приймаємо, мінорний стрибок — ні.
+Значення тримається синхронним із файлом `.terraform-version` (1.15.8), і саме
+його читає `tfenv install min-required`.
 
 ### Оператори версій — головне, що треба знати
 
@@ -387,15 +430,42 @@ variable "region" {
 
 ### Усі змінні проєкту
 
-| Змінна | Default | Про що подумати |
-|---|---|---|
-| `region` | `eu-central-1` | Франкфурт — найближчий до України. `eu-north-1` (Стокгольм) дешевший |
-| `cluster_name` | `mlops-demo` | ⚠️ якщо група працює в **одному** акаунті — кожен ставить своє унікальне імʼя |
-| `kubernetes_version` | `1.34` | тримайте в межах ±1 від вашого `kubectl` |
-| `instance_type` | `t3.medium` | `t3.small` дешевший, але вміщає лише ~11 подів — на демо зі скейлінгом замало |
-| `node_desired_size` | `2` | скільки нод зараз |
-| `node_min_size` | `1` | нижче autoscaler не опустить |
-| `node_max_size` | `3` | **захист від рахунку на $1000** |
+Їх рівно вісім — стільки ж, скільки блоків `variable` у файлі:
+
+| Змінна | Тип | Default | Про що подумати |
+|---|---|---|---|
+| `region` | string | `eu-central-1` | Франкфурт — найближчий до України. `eu-north-1` (Стокгольм) дешевший |
+| `cluster_name` | string | `mlops-demo` | ⚠️ якщо група працює в **одному** акаунті — кожен ставить своє унікальне імʼя |
+| `kubernetes_version` | string | `1.34` | тримайте в межах ±1 від вашого `kubectl` |
+| `instance_type` | string | `t3.medium` | `t3.small` дешевший, але вміщає лише ~11 подів — на демо зі скейлінгом замало |
+| `node_desired_size` | number | `3` | не 2: повний стек курсу займає **рівно 34 з 34** слотів на двох нодах. Для самих Тем 5–6 (лише nginx) вистачить `-var node_desired_size=2` |
+| `node_ami_release_version` | string | `1.34.9-20260801` | заморожений AMI Amazon Linux 2023. Перша частина мусить збігатися з `kubernetes_version` |
+| `node_min_size` | number | `1` | нижче autoscaler не опустить |
+| `node_max_size` | number | `3` | **захист від рахунку на $1000**. Має `validation`: `max >= desired`, інакше помилка ще на `plan` |
+
+**`node_desired_size` діє лише при СТВОРЕННІ node group.** Модуль ставить на цей
+ресурс `ignore_changes = [scaling_config[0].desired_size]`, тож живому кластеру
+ноду додають не через Terraform:
+
+```bash
+aws eks update-nodegroup-config --cluster-name mlops-demo --region eu-central-1 \
+  --nodegroup-name $(aws eks list-nodegroups --cluster-name mlops-demo \
+     --region eu-central-1 --query nodegroups[0] --output text) \
+  --scaling-config minSize=1,maxSize=3,desiredSize=3
+```
+
+**`node_ami_release_version` — навіщо пін.** Дефолт модуля
+`use_latest_ami_release_version = true` означає, що кожен `plan` читає з SSM
+найсвіжіший AL2023 і показує зміну `release_version`. AWS випускає збірку
+приблизно щотижня, тож `plan` «брудний» постійно, а `apply` на таку зміну — це
+rolling replacement **усіх** нод (~10 хв, усі поди переїжджають). Ми ставимо
+`use_latest_ami_release_version = false` і фіксуємо версію: у студента, який
+робив `apply` у понеділок, і в того, хто у пʼятницю, буде однакове ядро й
+containerd. У проді роблять навпаки — оновлюють свідомо, у вікно обслуговування,
+бо в новому AMI закриваються CVE.
+
+> Помилка при неузгодженні: `Requested release version 1.33.x is not valid for
+> kubernetes version 1.34`. Міняєте `kubernetes_version` — міняйте й цю змінну.
 
 ### Три способи перевизначити змінну
 
@@ -696,7 +766,7 @@ vpc-cni = { before_compute = true }
 > (2 репліки) + `ebs-csi-node` (DaemonSet, 1 на ноду) + `eks-pod-identity-agent`
 > (DaemonSet) = **+6 подів на 2-нодовому кластері**. На `t3.medium` ліміт ~17
 > подів на ноду, тому це не дрібниця — див. коментар до `node_desired_size`
-> у [`variables.tf`](terraform/variables.tf).
+> у [`variables.tf`](../terraform/cluster/variables.tf).
 
 #### Сховище: EBS CSI driver і чому дефолтний `gp2` мертвий
 
@@ -738,7 +808,7 @@ created`. **Тиша в подіях = ніхто не взявся за роб�
 `ebs.csi.aws.com_...`.
 
 **Що ми ставимо замість.** Два addon-и вище + IAM-роль у
-[`terraform/ebs-csi-iam.tf`](terraform/ebs-csi-iam.tf) + новий StorageClass.
+[`terraform/cluster/ebs-csi-iam.tf`](../terraform/cluster/ebs-csi-iam.tf) + новий StorageClass.
 Драйвер — це под, а поду потрібне право на `ec2:CreateVolume`, тож роль
 обовʼязкова: без неї addon буде `ACTIVE`, а кожен PVC впаде з `AccessDenied`.
 Права видаємо через **EKS Pod Identity** (сучасний механізм; trust policy на
@@ -747,7 +817,7 @@ created`. **Тиша в подіях = ніхто не взявся за роб�
 аргумент на маленькому кластері.
 
 **StorageClass — це Kubernetes, а не AWS**, тому він у
-[`deploy/0-storage/storageclass-gp3.yaml`](deploy/0-storage/storageclass-gp3.yaml),
+[`deploy/0-storage/storageclass-gp3.yaml`](../deploy/0-storage/storageclass-gp3.yaml),
 а не в Terraform. Причина в межі відповідальності: `kubernetes_storage_class`
 затягнув би в проєкт provider `kubernetes` з автентифікацією через
 `aws eks get-token`, дав би класичне `Provider configuration unknown` на першому
@@ -760,7 +830,7 @@ created`. **Тиша в подіях = ніхто не взявся за роб�
 
 ```bash
 # 1. Драйвер мусить існувати ДО першого PVC
-terraform apply
+cd terraform/cluster && terraform apply && cd ../..
 
 # 2. Зняти дефолт зі старого класу. Мінус у кінці = ВИДАЛИТИ анотацію.
 #    Два дефолтних класи = недетермінований вибір: PVC може приліпитись
@@ -782,6 +852,12 @@ kubectl get pvc gp3-smoke -w
 kubectl logs pod/gp3-smoke                            # ok
 kubectl delete -f deploy/0-storage/smoke-test.yaml    # 🔴 не забути!
 ```
+
+> **`make cluster-up` робить кроки 1 і 3 за вас** — `terraform apply`, потім
+> `aws eks update-kubeconfig`, потім `kubectl apply -f deploy/0-storage/storageclass-gp3.yaml`.
+> Крок 2 (зняти дефолт із `gp2`) він **не** робить: анотацію ставить сам EKS при
+> створенні кластера, і на свіжому кластері у вас буде два дефолтних класи.
+> Перевірте `kubectl get sc` — `(default)` має бути рівно в одному рядку.
 
 `gp3` замість `gp2` не з примхи: він **на 20% дешевший** ($0.0952 проти $0.119
 за GiB-міс у Франкфурті) і вже включає 3000 IOPS та 125 MB/s. Реалістичні
@@ -880,8 +956,30 @@ output "cluster_ca" {
 
 ## 8. Запуск: init → plan → apply
 
+> ### Коротка дорога — і чому ми йдемо довгою
+> У корені репозиторію є ціль, яка робить увесь цей розділ однією командою:
+>
+> ```bash
+> make cluster-up
+> ```
+>
+> Усередині неї рівно чотири команди (подивіться самі: `Makefile`, ціль
+> `cluster-up`): `terraform init -input=false`, `terraform apply`,
+> `aws eks update-kubeconfig --name mlops-demo`, `kubectl apply -f
+> deploy/0-storage/storageclass-gp3.yaml`. Тобто розділи 8 і 9 цього гайду
+> плюс StorageClass із 6.5.
+>
+> На занятті пройдіть **вручну**: `make cluster-up` не показує ані `plan`, ані
+> того, що саме Terraform створює, а вміння прочитати `plan` до `apply` — це і є
+> зміст Теми 5. Далі, коли кластер треба буде просто підняти, користуйтесь `make`.
+>
+> ⚠️ Імʼя `mlops-demo` у `make cluster-up` **зашите**. Якщо ви змінили
+> `cluster_name` (група в одному акаунті — див. розділ 5), `terraform apply`
+> відпрацює, а наступний рядок впаде з `ResourceNotFoundException: No cluster
+> found for name: mlops-demo`. Тоді `update-kubeconfig` робіть руками — розділ 9.
+
 ```bash
-cd terraform
+cd terraform/cluster
 export AWS_PROFILE=ваш-профіль    # якщо у вас не default-профіль
 ```
 
@@ -1057,10 +1155,12 @@ kubectl get nodes -o wide
 ```
 NAME                          STATUS   ROLES    AGE   VERSION
 ip-10-0-1-123.ec2.internal    Ready    <none>   2m    v1.34.x
+ip-10-0-8-201.ec2.internal    Ready    <none>   2m    v1.34.x
 ip-10-0-17-45.ec2.internal    Ready    <none>   2m    v1.34.x
 ```
 
-Дві ноди в статусі `Ready` — кластер живий. 🎉
+Три ноди в статусі `Ready` — кластер живий. 🎉 (Дві, якщо ви робили
+`apply -var node_desired_size=2`.)
 
 > Якщо `STATUS` = `NotReady` — зачекайте 1–2 хвилини, ноди ще піднімають CNI.
 
@@ -1107,13 +1207,53 @@ kubectl get namespaces    # логічні «теки» кластера
 
 ## 10. Деплой застосунку
 
-Файл `k8s/nginx.yaml` містить два обʼєкти: **Deployment** (тримає 2 поди) і
-**Service** типу `LoadBalancer` (публічна точка входу). Детальні коментарі —
-всередині файлу.
+Нам потрібні два обʼєкти: **Deployment** (тримає 2 поди) і **Service** типу
+`LoadBalancer` (публічна точка входу). Файлу для них у репозиторії немає навмисно:
+у Темі 6 ті самі ресурси будуть у `deploy/1-kubectl/` — але там `Service` має тип
+`ClusterIP`, бо чотири балансувальники по $0.03/год за одну пару нікому не
+потрібні. Тут же нам потрібен саме `LoadBalancer`: він і показує роботу тегів
+підмереж із розділу 6.4, і створює ту саму пастку, заради якої існує розділ 13.
+
+Тому — просто в термінал:
 
 ```bash
-cd ..                            # у корінь репозиторію
-kubectl apply -f k8s/nginx.yaml
+cd ../..                         # у корінь репозиторію
+
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: nginx-demo }
+  template:
+    metadata:
+      labels: { app: nginx-demo }
+    spec:
+      containers:
+        - name: nginx
+          # public.ecr.aws, а не Docker Hub: у Hub анонімний ліміт 100 pull/6 год
+          # на IP, а всі ноди виходять в інтернет через ОДИН NAT Gateway —
+          # тобто на всю групу одна квота. Симптом: ErrImagePull "toomanyrequests".
+          image: public.ecr.aws/nginx/nginx:1.29-alpine
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo
+spec:
+  type: LoadBalancer      # ← саме через це AWS створить Classic Load Balancer
+  selector: { app: nginx-demo }
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
 ```
 
 ```
@@ -1387,7 +1527,7 @@ echo "Бакет: $BUCKET"
 
 ### 12.2. Вмикаємо backend
 
-У `terraform/versions.tf` розкоментуйте блок і підставте своє імʼя бакета:
+У `terraform/cluster/versions.tf` розкоментуйте блок і підставте своє імʼя бакета:
 
 ```hcl
 terraform {
@@ -1414,7 +1554,7 @@ terraform {
 ### 12.3. Мігруємо стейт
 
 ```bash
-cd terraform
+cd terraform/cluster
 terraform init -migrate-state
 ```
 
@@ -1434,7 +1574,7 @@ terraform state list | head    # має і далі бачити всі 62 ре�
 
 ## 13. 🔴 Прибирання і контроль витрат
 
-> **Це найважливіший розділ.** Кластер, який забули знести, коштує **~$200/міс**.
+> **Це найважливіший розділ.** Кластер, який забули знести, коштує **~$235/міс**.
 
 ### Порядок має значення
 
@@ -1442,10 +1582,24 @@ terraform state list | head    # має і далі бачити всі 62 ре�
  1. kubectl delete (+ PVC)  →  2. LB зник, диски available  →  3. terraform destroy
 ```
 
+> ### 🔴 Якщо ви вже проходили Теми 6–10 на цьому кластері
+> Спершу **`make down`** — і лише потім усе нижче. `make down` видаляє
+> `argocd/root.yaml`, а його фіналайзер каскадом зносить десять дочірніх
+> Application і все, що вони створили: Service, PVC, namespace.
+>
+> Пропустите цей крок — `terraform destroy` крутитиметься ~20 хвилин і впаде на
+> `DependencyViolation: The subnet has dependencies and cannot be deleted`, бо
+> балансувальники й ENI, створені Kubernetes, тримають підмережі. Terraform про
+> них не знає: їх немає в `terraform.tfstate`.
+>
+> Те саме одним рядком робить `make cluster-down` — він питає підтвердження і
+> нагадує про `make down`, але **сам його не викликає**. Порядок на вас.
+
 ### Крок 1: спершу знести те, що створив Kubernetes
 
 ```bash
-kubectl delete -f k8s/nginx.yaml
+# nginx із розділу 10 — саме він створив Classic Load Balancer
+kubectl delete deploy/nginx-demo svc/nginx-demo --ignore-not-found
 
 # І окремо — ДИСКИ. Їх створив CSI-драйвер, у tfstate їх немає,
 # тож terraform destroy про них не знає і залишить їх у рахунку.
@@ -1489,9 +1643,11 @@ aws ec2 describe-volumes --region eu-central-1 \
 ### Крок 3: `terraform destroy`
 
 ```bash
-cd terraform
+cd terraform/cluster
 terraform destroy
 ```
+
+Те саме з підтвердженням і нагадуванням про порядок: `make cluster-down`.
 
 Прочитайте план (`62 to destroy`), введіть **`yes`**. Триває **~10–15 хвилин**.
 
@@ -1556,7 +1712,7 @@ AWS Console → **Billing and Cost Management** → **Budgets** → *Create budg
 |---|---|---|
 | `brew install tfenv` → `Cannot link... /opt/homebrew/bin/terraform already exists` | стоїть формула `terraform` | `brew uninstall terraform`, потім `brew install tfenv` |
 | `terraform: command not found` після встановлення tfenv | не поставлена жодна версія | `tfenv install 1.15.8 && tfenv use 1.15.8` |
-| `Terraform v1.5.7 does not match configured version` | tfenv не бачить `.terraform-version` | ви не в теці `terraform/`. `cd terraform` |
+| `Terraform v1.5.7 does not match configured version` | tfenv не бачить `.terraform-version` | ви не в теці `terraform/cluster/`. `cd terraform/cluster` |
 | `Unable to locate credentials` | немає AWS-ключів | `aws configure`, тоді `aws sts get-caller-identity` |
 | Terraform ходить не в той акаунт | активний не той профіль | `export AWS_PROFILE=потрібний`; перевірити `aws sts get-caller-identity` |
 | `Error: Unsupported argument: cluster_name` | ви скопіювали код для модуля **v20**, у нас **v21** | `cluster_name`→`name`, `cluster_version`→`kubernetes_version` — див. таблицю в 6.5 |
@@ -1568,14 +1724,15 @@ AWS Console → **Billing and Cost Management** → **Budgets** → *Create budg
 | Ноди в статусі `NotReady` довше 5 хв | не піднявся CNI, часто через відсутність NAT | `kubectl describe node`; перевірте `enable_nat_gateway = true` |
 | Под вічно в `Pending` | на нодах немає вільних ресурсів **або** скінчились IP | `kubectl describe pod <name>` → секція `Events` |
 | PVC вічно в `Pending`, в `Events` **тиша** (жодного провізіонера) | клас `gp2` з вилученим `kubernetes.io/aws-ebs` — його не обробляє ніхто | зняти дефолт з `gp2`, застосувати `deploy/0-storage/storageclass-gp3.yaml` — [розділ 6.5](#сховище-ebs-csi-driver-і-чому-дефолтний-gp2-мертвий) |
-| PVC у `Pending`, у `Events` — `AccessDenied` від `ebs.csi.aws.com` | addon стоїть, а IAM-роль ні (або trust policy не на `pods.eks.amazonaws.com`) | перевірте `ebs-csi-iam.tf` і `aws eks list-pod-identity-associations --cluster-name mlops-demo` |
+| PVC у `Pending`, у `Events` — `AccessDenied` від `ebs.csi.aws.com` | addon стоїть, а IAM-роль ні (або trust policy не на `pods.eks.amazonaws.com`) | перевірте `terraform/cluster/ebs-csi-iam.tf` і `aws eks list-pod-identity-associations --cluster-name mlops-demo` |
 | Под із PVC у `Pending`: `node(s) had volume node affinity conflict` | EBS-том в одній AZ, вільна нода — в іншій | `volumeBindingMode: WaitForFirstConsumer` у класі; повернути ноду в ту саму AZ або перестворити PVC |
 | `StorageClass.provisioner: Invalid value: field is immutable` | ви намагаєтесь полагодити `gp2` | не лікується — тільки **новий** клас з новим імʼям |
 | `terraform apply` не змінює кількість нод, хоч `node_desired_size` інший | модуль ігнорує зміни `desired_size` для існуючої групи | `aws eks update-nodegroup-config ... --scaling-config desiredSize=3` (команда в `main.tf`) |
-| `plan` показує зміну `release_version` у node group | `use_latest_ami_release_version = true` — вийшов новий AL2023 | це rolling replacement нод (~10 хв). Робіть **до** створення PVC або пініть `use_latest_ami_release_version = false` |
+| `plan` показує зміну `release_version` у node group | ви підняли `node_ami_release_version` — або хтось прибрав `use_latest_ami_release_version = false`, і модуль знову тягне найсвіжіший AL2023 | це rolling replacement **усіх** нод (~10 хв). Робіть свідомо і **до** створення PVC |
+| `Requested release version 1.33.x is not valid for kubernetes version 1.34` | `node_ami_release_version` не збігається з `kubernetes_version` | привести перші дві цифри до однакових; чинна версія: `aws ssm get-parameter --name /aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/release_version --region eu-central-1 --query Parameter.Value --output text` |
 | `Too many pods` на ноді | ліміт подів на інстанс (t3.medium ≈ 17) | більший тип інстанса або більше нод |
 | `EXTERNAL-IP` вічно `<pending>` | немає тегів `kubernetes.io/role/elb` на підмережах | перевірте `public_subnet_tags` у `module "vpc"` |
-| `destroy` падає з `DependencyViolation ... subnet has dependencies` | залишився Load Balancer, створений Kubernetes | `kubectl delete -f k8s/nginx.yaml`, зачекати, повторити `destroy` |
+| `destroy` падає з `DependencyViolation ... subnet has dependencies` | залишився Load Balancer, створений Kubernetes | `make down` (або `kubectl delete deploy/nginx-demo svc/nginx-demo`), зачекати 2 хв, повторити `destroy` |
 | `Error acquiring the state lock` | попередній `apply` не завершився коректно | переконатись, що ніхто не працює паралельно, тоді `terraform force-unlock <LOCK_ID>` |
 | `kubectl`: `unknown flag: --cpu-percent` / `--requests` | прапорці прибрані у нових версіях kubectl | `--cpu-percent` → `--cpu`; замість `kubectl run --requests` описуйте ресурси в YAML |
 | `kubectl` лається на неіснуючий кластер, хоча ви його знесли | у `~/.kube/config` лишився старий контекст | `kubectl config delete-context <імʼя>` |
@@ -1585,7 +1742,7 @@ AWS Console → **Billing and Cost Management** → **Budgets** → *Create budg
 
 ## Що далі
 
-### ➡️ [Тема 6 — Чотири способи деплою (DEPLOY.md)](DEPLOY.md)
+### ➡️ [Тема 6 — Чотири способи деплою](06-deploy-methods.md)
 
 Кластер піднято. Наступний крок — **як саме** доставляти в нього застосунки.
 Один і той самий nginx, задеплоєний чотирма способами, кожен зі своєю
@@ -1602,7 +1759,7 @@ AWS Console → **Billing and Cost Management** → **Budgets** → *Create budg
 
 - **Karpenter** — розумніший autoscaler нод замість Cluster Autoscaler
 - **IRSA / Pod Identity** — ми вже користуємось Pod Identity для драйвера дисків
-  (`terraform/ebs-csi-iam.tf`); той самий патерн дає IAM-права будь-якому поду
+  (`terraform/cluster/ebs-csi-iam.tf`); той самий патерн дає IAM-права будь-якому поду
 - **AWS Load Balancer Controller** — сучасні ALB/NLB замість Classic LB
 - **AWS Secrets Manager / SSM Parameter Store** — секрети (слайд 32)
 

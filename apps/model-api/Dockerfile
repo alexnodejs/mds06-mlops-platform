@@ -6,7 +6,7 @@
 # коли у Dockerfile є apt-get install build-essential або збірка з сорсів.
 #
 # ЗБІРКА (мак на ARM, ноди EKS на x86_64 — без --platform под падає в exec format error):
-#   docker buildx build --platform linux/amd64 -t <ecr>/mds06-ml-model:v1 --push .
+#   docker buildx build --platform linux/amd64 -t <ecr>/mds06-ml-model:v4 --push .
 FROM python:3.13-slim
 
 # python:3.13-slim, а не 3.12: numpy 2.5.2 вимагає Python >= 3.12, а колеса

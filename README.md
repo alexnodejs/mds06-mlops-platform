@@ -87,6 +87,7 @@ make pipeline-up     # Тема 10:  Step Functions + Lambda + OIDC, ~1 хв
 | Модель | http://localhost:8000 | `POST /predict` |
 | MinIO | http://localhost:9001 | `minioadmin` / друкує `make ports` |
 | Prometheus | http://localhost:9090 | не потрібен |
+| React (демо GitOps) | http://localhost:8087 | не потрібен |
 
 > MLflow на **5001**, а не 5000: порт 5000 на macOS тримає AirPlay Receiver, і
 > тунель туди мовчки не встає.

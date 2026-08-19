@@ -125,7 +125,7 @@ module "eks" {
   source = "terraform-aws-modules/eks/aws"
   # УВАГА: у v21 змінні перейменовані порівняно з v20 (cluster_name -> name,
   # cluster_version -> kubernetes_version). Туторіали з інтернету на v20
-  # тут НЕ спрацюють — див. розділ «Типові помилки» в README.
+  # тут НЕ спрацюють — див. розділ «Типові помилки» в docs/05-eks-terraform.md.
   version = "~> 21.0"
 
   # Імʼя кластера — його ви побачите в консолі і будете вказувати в kubectl.

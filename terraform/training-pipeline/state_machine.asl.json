@@ -43,7 +43,7 @@
           "apiVersion": "batch/v1",
           "kind": "Job",
           "metadata": {
-            "name.$": "States.Format('train-{}-{}', $.params.short_sha, $$.Execution.Name)"
+            "name.$": "$.params.job_name"
           },
           "spec": {
             "backoffLimit": 0,
@@ -137,7 +137,7 @@
           "apiVersion": "batch/v1",
           "kind": "Job",
           "metadata": {
-            "name.$": "States.Format('promote-{}-{}', $.params.short_sha, $$.Execution.Name)"
+            "name.$": "$.params.promote_job_name"
           },
           "spec": {
             "backoffLimit": 0,

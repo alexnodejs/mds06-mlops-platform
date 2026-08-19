@@ -52,7 +52,7 @@ def _ints(raw: str, field: str, hi: int) -> list[int]:
     return out
 
 
-def handler(event, _context):
+def handler(event, context):
     commit_sha = str(event.get("commit_sha", "")).strip()
     # 7 символів — мінімум, який git вважає однозначним скороченням.
     if not re.fullmatch(r"[0-9a-f]{7,40}", commit_sha):
@@ -87,15 +87,29 @@ def handler(event, _context):
         )
 
     short_sha = commit_sha[:7]
+
+    # Унікальний суфікс — з aws_request_id виклику Lambda. Він унікальний на
+    # кожен виклик і складається з [0-9a-f-], тобто гарантовано підходить під
+    # RFC 1123, за яким Kubernetes перевіряє імена обʼєктів.
+    #
+    # Чому не $$.Execution.Name прямо в ASL: імʼя виконання Step Functions
+    # дозволяє символи, яких Kubernetes не приймає (підкреслення, крапки,
+    # верхній регістр). Достатньо одному студенту запустити виконання з іменем
+    # "Test_1" — і Job не створиться, а помилка буде про «invalid value»,
+    # у якій звʼязок із іменем виконання неочевидний.
+    uniq = context.aws_request_id[:8] if context is not None else "local"
+
     return {
         "commit_sha": commit_sha,
         "short_sha": short_sha,
         "ref": str(event.get("ref") or "main"),
         "run_url": str(event.get("run_url") or ""),
-        # Ім'я Job мусить бути унікальним: eks:runJob.sync НЕ прибирає Job за
-        # собою одразу, і другий запуск з тим самим іменем дав би 409
-        # AlreadyExists. SHA коміта + суфікс від Step Functions = унікально.
-        "job_name": f"train-{short_sha}",
+        # Імена Job мусять бути унікальними: eks:runJob.sync не прибирає Job
+        # за собою одразу, і другий запуск з тим самим іменем дав би 409
+        # AlreadyExists. SHA коміта лишаємо в імені, щоб у `kubectl get job`
+        # було видно, який коміт тренувався.
+        "job_name": f"train-{short_sha}-{uniq}",
+        "promote_job_name": f"promote-{short_sha}-{uniq}",
         "experiment": experiment,
         "grid_n_estimators": ",".join(str(x) for x in n_estimators),
         "grid_max_depth": ",".join(depths),

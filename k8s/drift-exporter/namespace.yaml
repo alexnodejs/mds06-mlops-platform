@@ -10,4 +10,4 @@ kind: Namespace
 metadata:
   name: mlflow
   labels:
-    app.kubernetes.io/part-of: mds06-mlflow-drift
+    app.kubernetes.io/part-of: mds06-mlops-platform

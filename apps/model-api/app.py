@@ -265,11 +265,16 @@ async def count_requests(request: Request, call_next):
     # виконуються. Наслідок: http_requests_total ніколи не отримує
     # status="500", і панель «Помилки» в Grafana порожня саме тоді, коли
     # помилки є. Виняток кидаємо далі — 500 клієнту віддає Starlette.
+    # ⚠️ Значення ДО try, а не тільки в гілках. asyncio.CancelledError (клієнт
+    # відвалився, uvicorn зупиняється) — це BaseException, його `except
+    # Exception` НЕ ловить, але finally однаково виконається. Без цього рядка
+    # там буде UnboundLocalError, який З'ЇСТЬ оригінальний виняток разом із
+    # трейсбеком і зламає скасування корутини.
+    status = 500
     try:
         response = await call_next(request)
         status = response.status_code
     except Exception:  # noqa: BLE001 — тільки рахуємо, обробка вище за стеком
-        status = 500
         raise
     finally:
         # Власні скрейпи Prometheus не рахуємо. Він ходить на /metrics раз на

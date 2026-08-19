@@ -86,9 +86,9 @@ for a volume to be created`. Тиша в подіях = ніхто не взяв
 Порівняйте з `gp3`, де відразу зʼявляються `Provisioning` /
 `ProvisioningSucceeded` від `ebs.csi.aws.com_...`.
 
-**Лікування** (у репозиторії `mds06-kuber-from-scratch`, бо це Terraform):
-addon `aws-ebs-csi-driver` + `eks-pod-identity-agent`, IAM-роль
-(`terraform/ebs-csi-iam.tf`) і новий StorageClass
+**Лікування** (після злиття репозиторіїв Terraform Теми 5 лежить поруч, у цьому
+ж дереві): addon `aws-ebs-csi-driver` + `eks-pod-identity-agent`, IAM-роль
+(`terraform/cluster/ebs-csi-iam.tf`) і новий StorageClass
 `deploy/0-storage/storageclass-gp3.yaml` з `volumeBindingMode:
 WaitForFirstConsumer`. Порядок і гейти — у розділі «Швидкий старт».
 
@@ -158,31 +158,40 @@ rolling update.
 
 ## Швидкий старт
 
-### 0. 🚦 Роззброїти міну в Terraform
+Уся тема піднімається однією командою — `make up`. Нижче розібрано, що вона
+робить усередині і в яких місцях треба зупинитись і подивитись очима.
+
+### 0. 🚦 Перевірити розмір node group
 
 ```bash
-cd /Users/alexandervasileyko/Repos/goit/mds06-kuber-from-scratch
-git checkout terraform/variables.tf     # у робочій копії було desired=1, max=1
-git diff --stat terraform/              # мусить бути порожньо по variables.tf
+git diff --stat terraform/cluster/variables.tf    # мусить бути порожньо
+grep -n "default" terraform/cluster/variables.tf
 ```
 
-`terraform apply` з `node_max_size = 1` зсадить ASG до однієї ноди: −17 слотів,
-−1930m CPU, −3.2 GiB, і `max_size=1` **забороняє відкат скейлом**. Найдорожча
-помилка теми.
+Дефолти в репозиторії — `node_desired_size = 3` і `node_max_size = 3`, а в
+`variables.tf` є `validation`, яка ловить `max < desired` ще на `plan`, за
+секунди. Але правка в робочій копії цю сітку обходить: `apply` з
+`node_max_size = 1` зсадить ASG до однієї ноди (−17 слотів, −1930m CPU,
+−3.2 GiB), і `max_size = 1` **забороняє відкат скейлом**. Найдорожча помилка
+теми, а виглядає вона як «ArgoCD чомусь завис у Progressing».
 
 ### 1. Сховище: addon + IAM + StorageClass
 
+Ціль `make cluster-up` робить чотири кроки: `terraform init`, `terraform apply`,
+`aws eks update-kubeconfig`, `kubectl apply -f deploy/0-storage/storageclass-gp3.yaml`.
+Один раз варто пройти їх руками — через план, який треба прочитати очима.
+
 ```bash
-cd terraform && terraform init -upgrade
-terraform plan -var node_desired_size=3 -out=tema9.tfplan
+cd terraform/cluster && terraform init -upgrade
+terraform plan -out=tema9.tfplan
 ```
 
 🚦 **Гейт: читати план очима.** Очікувано РІВНО чотири `+`
 (`aws_iam_role.ebs_csi`, `aws_iam_role_policy_attachment.ebs_csi`,
 `module.eks.aws_eks_addon.this["aws-ebs-csi-driver"]`,
-`module.eks.aws_eks_addon.before_compute["eks-pod-identity-agent"]`) і `~` зміна
-`desired_size 2 → 3`. Побачили `-/+`, `must be replaced`, будь-що про
-`aws_launch_template` / `aws_eks_cluster` / перестворення node group — **СТОП**.
+`module.eks.aws_eks_addon.before_compute["eks-pod-identity-agent"]`). Побачили
+`-/+`, `must be replaced`, будь-що про `aws_launch_template` /
+`aws_eks_cluster` / перестворення node group — **СТОП**.
 
 > `most_recent = true` — дефолт модуля для КОЖНОГО addon, тож план може
 > запропонувати оновити ще й coredns / kube-proxy / vpc-cni. Це rolling-рестарт
@@ -197,58 +206,76 @@ kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
 kubectl get csidrivers                  # має зʼявитись ebs.csi.aws.com
 aws eks list-pod-identity-associations --cluster-name mlops-demo --region eu-central-1
 
-# ПОРЯДОК ОБОВʼЯЗКОВИЙ: спершу зняти дефолт зі старого класу
+# ПОРЯДОК ОБОВʼЯЗКОВИЙ: спершу зняти дефолт зі старого класу.
+# ⚠️ цього кроку `make cluster-up` НЕ робить — анотація на gp2 лишається.
 kubectl annotate storageclass gp2 storageclass.kubernetes.io/is-default-class-
 kubectl apply -f deploy/0-storage/storageclass-gp3.yaml
 kubectl get sc                          # 🚦 РІВНО один рядок містить (default)
 
 # димовий тест, 40 секунд
+kubectl apply -f deploy/0-storage/smoke-test.yaml
 kubectl get pvc gp3-smoke -w            # Pending → Bound за ~15 с
 kubectl logs pod/gp3-smoke              # ok
-kubectl delete pod gp3-smoke; kubectl delete pvc gp3-smoke   # ПРИБРАТИ, це гроші
+kubectl delete -f deploy/0-storage/smoke-test.yaml   # ПРИБРАТИ, це гроші
 ```
 
 Два дефолтних StorageClass одночасно = недетермінований вибір: PVC може
 приліпитись до мертвого `gp2` і зависнути, а виглядатиме це як «драйвер не
 працює», хоча драйвер бездоганний.
 
-### 2. Стек Теми 8 — ДО Теми 9
+### 2. Образи в ECR
 
 ```bash
-/Users/alexandervasileyko/Repos/goit/mds06-ml-monitoring/redeploy.sh
-kubectl get crd | grep monitoring.coreos.com    # 🚦 CRD мусять існувати
+make images
 ```
 
-Порядок не косметичний: `app-drift` містить ServiceMonitor, а CRD
-`monitoring.coreos.com` приносить kube-prometheus-stack. Application із CR
-падає **цілком**, якщо CRD ще немає.
+Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v2`**,
+`mds06-ml-model:v4`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
+якщо його немає; реєстр визначається з ваших креденшелів
+(`aws sts get-caller-identity`), а не зашитий у Makefile.
+
+`--platform linux/amd64` всередині **обовʼязковий**: Mac ARM, ноди x86_64.
+Забули — `exec format error`. Збірка `mds06-mlflow-tools` — 8-12 хв через
+QEMU-емуляцію, решта швидше.
+
+Один образ `mds06-mlflow-tools:v2` на три задачі:
+`command: ["python", "train.py"]` для Job тренування,
+`["python", "drift_exporter.py"]` для Deployment експортера і
+`["python", "promote.py"]` для кроку промоції Теми 10. Саме `promote.py` —
+різниця між `v1` і `v2`. Контекст збірки — **корінь репозиторію**, бо
+`apps/trainer/Dockerfile` копіює файли і з `apps/trainer/`, і з
+`apps/drift-exporter/`.
+
+Є ще необовʼязковий `apps/drift-exporter/Dockerfile` — той самий експортер без
+mlflow/boto3/pandas/matplotlib, ~330 MiB замість ~1.1 GiB. Сенс: под експортера
+працює 24/7, а MLflow йому не потрібен ні на секунду. Контрактний образ — усе
+одно `apps/trainer/Dockerfile`.
+
+🚦 Теги тут мусять збігатися з `newTag` у `k8s/*/kustomization.yaml`. Розійшлись
+— отримаєте `ImagePullBackOff` при ідеально зеленому `Synced` в ArgoCD.
 
 ### 3. Один Secret на всі креденшели (слайд 23)
 
-```bash
-kubectl create namespace mlflow --dry-run=client -o yaml | kubectl apply -f -
+Це робить перший крок `make up` (`scripts/up.sh`), руками вводити нічого не
+треба. Паролі генеруються один раз і лягають у `~/.mlflow-demo-credentials`
+(`chmod 600`) — щоб логіни не мінялись між заняттями:
 
-MINIO_PW=$(openssl rand -hex 16); PG_PW=$(openssl rand -hex 16); PG_SUPER=$(openssl rand -hex 16)
-kubectl -n mlflow create secret generic mlflow-credentials \
-  --from-literal=rootUser=mlflowadmin \
-  --from-literal=rootPassword="$MINIO_PW" \
-  --from-literal=AWS_ACCESS_KEY_ID=mlflowadmin \
-  --from-literal=AWS_SECRET_ACCESS_KEY="$MINIO_PW" \
-  --from-literal=POSTGRES_DB=mlflow \
-  --from-literal=POSTGRES_USER=mlflow \
-  --from-literal=POSTGRES_PASSWORD="$PG_PW" \
-  --from-literal=POSTGRES_POSTGRES_PASSWORD="$PG_SUPER" \
-  --from-literal=MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:80 \
-  --from-literal=MLFLOW_S3_ENDPOINT_URL=http://minio.mlflow.svc.cluster.local:9000 \
-  --from-literal=AWS_DEFAULT_REGION=eu-central-1 \
-  --dry-run=client -o yaml | kubectl apply -f -
+```bash
+kubectl -n mlflow get secret mlflow-credentials -o jsonpath='{.data.rootUser}' | base64 -d; echo
+cat ~/.mlflow-demo-credentials          # MINIO_PW, PG_PW
 ```
+
+Секрет створюється **у двох namespace**: `mlflow` (його читають MinIO,
+PostgreSQL і сам MLflow) і `ml-demo` — там він потрібен сервісу моделі, щоб той
+міг СКАЧАТИ артефакт із MinIO. Без нього ml-model мовчки лишається на моделі,
+зашитій в образ, і демонстрація «промоутнули версію — сервіс її підхопив»
+(Тема 10) не працює.
 
 Секрет **поза Git і поза ArgoCD**: у нього немає лейбла
 `argocd.argoproj.io/instance`, тож `prune: true` його не знесе. Та сама команда
-з описом кожного ключа лежить у `k8s/secret-example.yaml` — і цей файл навмисно
-**не** в `kustomization.yaml`: інакше ArgoCD застосував би заглушки поверх
-реального обʼєкта, і MinIO отримав би пароль «ЗАМІНІТЬ...».
+з описом кожного ключа лежить у `k8s/drift-exporter/secret-example.yaml` — і цей
+файл навмисно **не** в `kustomization.yaml`: інакше ArgoCD застосував би
+заглушки поверх реального обʼєкта, і MinIO отримав би пароль «ЗАМІНІТЬ...».
 
 | Ключ | Хто читає |
 |---|---|
@@ -265,137 +292,226 @@ Secret з тими самими 11 ключами. Тоді **весь** реп�
 лежать лише посилання, значень немає. Vault + vault-secrets-operator — той
 самий патерн, інший бекенд.
 
-### 4. Образ інструментів у ECR
+### 4. ArgoCD: ОДИН apply на весь стек
 
 ```bash
-aws ecr create-repository --repository-name mds06-mlflow-tools --region eu-central-1 || true
-aws ecr get-login-password --region eu-central-1 \
-  | docker login --username AWS --password-stdin 832828869208.dkr.ecr.eu-central-1.amazonaws.com
-
-# З КОРЕНЯ репозиторію: контекст мусить бачити і train/, і drift/ —
-# у контрактному образі лежать ОБА скрипти.
-docker buildx build --platform linux/amd64 -f train/Dockerfile --push \
-  -t 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v1 .
+make up
 ```
 
-`--platform linux/amd64` **обовʼязково**: Mac ARM, ноди x86_64. Забули —
-`exec format error`. Збірка 8-12 хв через QEMU-емуляцію.
-
-Один образ на дві задачі: `command: ["python", "train.py"]` для Job
-тренування і `command: ["python", "drift_exporter.py"]` для Deployment
-експортера. Є ще необовʼязковий `drift/Dockerfile` — той самий експортер без
-mlflow/boto3/pandas/matplotlib, ~330 MiB замість ~1.1 GiB. Сенс: под експортера
-працює 24/7, а MLflow йому не потрібен ні на секунду. Контрактний образ — усе
-одно `train/Dockerfile`.
-
-### 5. ArgoCD: чотири Application
-
-```bash
-kubectl apply --server-side=true -f argocd/app-minio.yaml
-kubectl apply --server-side=true -f argocd/app-postgres.yaml
-kubectl apply --server-side=true -f argocd/app-mlflow.yaml
-kubectl apply --server-side=true -f argocd/app-drift.yaml
-kubectl -n argocd get applications -w
-```
-
-`--server-side=true` обовʼязковий: client-side apply запихає весь маніфест в
-анотацію `last-applied-configuration` і падає з `metadata.annotations: Too long:
-may not be more than 262144 bytes`.
+Усередині — `kubectl apply -f argocd/root.yaml` і чекання. Раніше тут було
+девʼять окремих `kubectl apply` з трьох різних репозиторіїв і зашиті паузи між
+«хвилями»; тепер один батьківський Application дивиться на теку `argocd/apps/`,
+а порядок задають анотації `sync-wave` у самих дочірніх файлах.
 
 | Хвиля | Application | Що робить |
 |---|---|---|
+| 0 | `monitoring` | kube-prometheus-stack: Prometheus, Grafana і **CRD `monitoring.coreos.com`** |
 | 0 | `minio` | standalone, PVC 8Gi gp3; Healthy лише після PostSync-хука, який створює bucket `mlflow-artifacts` |
 | 0 | `postgres` | PostgreSQL 18.6, PVC 8Gi gp3 |
-| 1 | *(вільна)* | зарезервована під `ExternalSecret`, якщо переїжджатимете на External Secrets Operator (слайд 23) |
+| 1 | `loki`, `log-collector` | Loki + Alloy: логи моделі, з яких експортер бере вікно |
+| 1 | `react-app` | демо GitOps Теми 6 |
 | 2 | `mlflow` | tracking server + UI |
-| 3 | `drift-exporter` | Deployment + Service + ServiceMonitor з теки `k8s/` (через kustomize) |
+| 2 | `ml-model` | сервіс моделі + генератор трафіку (Тема 8) |
+| 2 | `ml-dashboard` | обидва дашборди Grafana з `k8s/grafana-dashboards/` |
+| 3 | `drift-exporter` | Deployment + Service + ServiceMonitor з `k8s/drift-exporter/` (kustomize) |
 
-> **🔴 Чому хвилі тут — документація, а не механізм.** Анотація
-> `argocd.argoproj.io/sync-wave` діє в межах **одного** синку. Ці чотири
-> Application подані окремими `kubectl apply`, тож ArgoCD синкає їх незалежно і
-> черговість **не гарантована**. Щоб хвилі справді працювали, потрібен
-> **app-of-apps**: один батьківський Application, що дивиться на теку
-> `argocd/` — у ArgoCD є вбудований health-check для `kind: Application`
-> (Healthy лише коли дочірній Synced+Healthy), тому батько реально ЧЕКАЄ.
-> Це ж лікує граблі №5 Теми 8: **зараз правка `valuesObject` у Git нічого не
-> змінює**, доки не зробиш `kubectl apply` повторно. Свідомо не зроблено —
-> гарне домашнє завдання, а не прихований борг.
->
-> **Коректність від хвиль не залежить**, і це не самовиправдання, а два
-> реальних пояси. У MLflow `databaseConnectionCheck: true` додає
-> init-контейнер `dbchecker`, який чекає `PGHOST:PGPORT` з фібоначчі-бекофом, а
-> `databaseMigration: true` виносить міграції в окремий init-контейнер. У MinIO
-> PostSync-хук не віддає Healthy, поки bucket не створено. Тобто навіть при
-> одночасному застосуванні MLflow не впаде — почекає в `Init`.
+**Чому хвилі тепер механізм, а не документація.** Анотація `sync-wave` діє в
+межах ОДНОГО синку. Доки Application подавали окремими `kubectl apply`, ArgoCD
+синкав їх незалежно, черговість **не гарантувалась**, і перед `app-drift`
+доводилось руками чекати CRD Prometheus — інакше Application із ServiceMonitor
+падав цілком. Тепер усі десять — ресурси одного батьківського синку, а в ArgoCD
+є вбудований health-check для `kind: Application` (Healthy лише коли дочірній
+Synced+Healthy). Тобто батько реально ЧЕКАЄ, і ручне очікування CRD зникло.
 
-### 5б. Дашборд Grafana — окремим apply
+Побічний ефект того самого патерна — вилікувані граблі №5 Теми 8: правка
+`valuesObject` у Git тепер доїжджає в кластер сама. Видалений вручну Application
+повертає `selfHeal`, доданий у Git — зʼявляється без жодного `kubectl`.
+
+`ServerSideApply=true` у дочірніх Application лишається обовʼязковим:
+client-side apply запихає весь маніфест в анотацію
+`last-applied-configuration` і падає з `metadata.annotations: Too long: may not
+be more than 262144 bytes`.
+
+Далі `make up` вмикає генератор трафіку, проганяє одне тренування (щоб MLflow не
+був порожній) і піднімає тунелі.
 
 ```bash
-kubectl apply -f grafana/dashboard-configmap.yaml
+kubectl -n argocd get applications      # 10 рядків, усі Synced/Healthy
+make status                             # що саме працює в кластері
 ```
 
-Чому не через ArgoCD разом з експортером: `k8s/kustomization.yaml` має
-`namespace: mlflow` і **перезаписав би** `namespace: monitoring` цього
-ConfigMap. Технічно сайдкар Grafana знайшов би його й у `mlflow`
-(`searchNamespace: ALL`), тож якщо хочете все під GitOps — додайте файл у
-`resources:` кустомізації і змиріться, що обʼєкт житиме в чужому namespace.
-Ліниве й чесне рішення — один `kubectl apply`, бо дашборд змінюється раз на
-тему, а не раз на комміт.
+Перший запуск довший: kube-prometheus-stack ставить свої CRD ~3 хв.
+
+### 5. Дашборди Grafana — теж через ArgoCD
+
+Окремого `kubectl apply -f dashboard-configmap.yaml` більше немає.
+`k8s/grafana-dashboards/` — це kustomize-проєкт із `configMapGenerator`, який
+робить ConfigMap **із самого `.json`**:
+
+```yaml
+configMapGenerator:
+  - name: drift-dashboard
+    files:
+      - drift-dashboard.json
+labels:
+  - pairs: { grafana_dashboard: "1" }
+```
+
+Раніше поруч із кожним `.json` лежав рукописний `dashboard-configmap.yaml`, у
+якому той самий JSON був продубльований з відступом. Два джерела правди на один
+дашборд: правиш `.json` — Grafana показує старе, бо читає ConfigMap. 1263 рядки
+дубля прибрано.
+
+Дві речі, які легко зіпсувати:
+
+- **`grafana_dashboard: "1"`, а не `"true"` і не `""`.** У чарті
+  kube-prometheus-stack `labelValue = "1"`; будь-що інше — ConfigMap
+  ігнорується **мовчки**, без помилки в логах.
+- **Суфікс-хеш в імені лишається УВІМКНЕНИМ** (дефолт kustomize): правка
+  `.json` дає новий ConfigMap, сайдкар бачить подію і перечитує дашборд. З
+  `disableNameSuffixHash` імʼя не змінюється, і оновлення довелось би ловити
+  руками.
+
+Чому окремий Application (`argocd/apps/app-dashboard.yaml`), а не файл у
+kustomization дріфт-експортера: там жорстко стоїть `namespace: mlflow`, і
+трансформер переписав би namespace ConfigMap на `mlflow`. Сайдкар його все одно
+знайшов би (`searchNamespace: ALL`), але обʼєкт опинився б не там, де його
+шукають за документацією.
 
 ### 6. 🚦 Перевірити, що метрики реально є
 
 ```bash
-kubectl -n mlflow get servicemonitor          # мусить бути 2: mlflow і drift-exporter
-kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
-# у /targets шукати: mlflow (path /mlflow/metrics!), drift-exporter (path /metrics)
+kubectl -n mlflow get servicemonitor    # мусить бути 2: mlflow і drift-exporter
+make ports                              # серед іншого Prometheus на 9090
+# у http://localhost:9090/targets шукати: mlflow (path /mlflow/metrics!),
+# drift-exporter (path /metrics)
 ```
 
 Це найтихіша пастка теми: ArgoCD пише Synced/Healthy, а метрик немає.
 
-### 7. Виправити генератор Теми 8 — без цього демо провалиться
+### 7. Генератор трафіку: чому в ньому справжні рядки Iris
 
-**Заміряно:** генератор Теми 8 шле вигадані центроїди з `sigma=0.25/0.9`, і це
-не розподіл справжнього Iris. KS по `petal_width` на **чистих** даних дає
-p = 0.041 / 0.015 / 0.028 (вікна 600 / 3000 / 9000) → `drift_detected{feature="petal_width"} = 1`
-**ще до будь-якої симуляції**. Панель червона з початку, і розповідь «дивіться,
-0 стрибає в 1» розсипається.
+Це вже виправлено в репозиторії — але зрозуміти чому обовʼязково, бо саме тут
+Тема 9 найлегше провалюється на демонстрації.
 
-**Виправлення — 4 рядки: семплити РЕАЛЬНІ рядки Iris** (той самий train-split,
-що є еталоном) з джитером 0.05.
+**Заміряно:** поки генератор шле вигадані «центроїди» класів, KS-тест порівнює
+цей трафік з еталоном (train-split Iris) і бачить РІЗНИЦЮ на чистих даних. На
+12 вікнах по 2850 записів `petal_width` давав p < 0.01 в **11 випадках із 12**.
+Панель червона з початку, і розповідь «дивіться, 0 стрибає в 1» розсипається.
+
+Реальний код у `k8s/model-api/loadgen.yaml` (ConfigMap `loadgen-script`)
+семплить **справжні рядки того самого train-split**:
 
 ```python
-_data = load_iris()
-_X, _, _y, _ = train_test_split(_data.data, _data.target,
-    test_size=0.2, random_state=42, stratify=_data.target)
-ROWS = _X.tolist()
+_d = load_iris()
+X_TRAIN, _, _, _ = train_test_split(
+    _d.data, _d.target, test_size=0.2, random_state=42, stratify=_d.target)
 
 def payload():
     r = random.random()
     if r < 0.05:                      # 5% битих → 422, панель помилок не нульова
         return {"sepal_length": 999, "sepal_width": "abc",
                 "petal_length": None, "petal_width": -1}
-    row = random.choice(ROWS)
-    return {f: round(max(0.1, random.gauss(v + DRIFT_SHIFT, JITTER)), 2)
-            for f, v in zip(FIELDS, row)}
+    row = X_TRAIN[random.randrange(len(X_TRAIN))]
+    return {f: round(max(0.1, row[i] + random.gauss(DRIFT_SHIFT, JITTER)), 2)
+            for i, f in enumerate(FIELDS)}
 ```
 
-`JITTER=0.05` теж заміряно: при 0.10 сам джитер перекидає прикордонні зразки
-через межі класів, і хі-квадрат бачить «дріфт» на чистих даних у 6% вікон.
+`random_state=42`, `test_size=0.2`, `stratify` — **ті самі**, що в `train.py` і
+в еталоні експортера. Інакше порівнювати немає сенсу.
 
-**Перезбірка образу НЕ потрібна.** Скрипт генератора лежить у ConfigMap
-`loadgen-script` (файл `k8s/loadgen.yaml` Теми 8), а не в образі, і `sklearn`
-в образі `mds06-ml-model:v1` уже є:
+**`JITTER=0.25` — заміряне значення. У старих чернетках теми стояло 0.05;
+джерело правди — код.** Два числа, на яких тримається вибір:
+
+- **KS: 0 хибних тривог із 12 вікон** (проти 11/12 у варіанта з центроїдами);
+- **розкид впевненості зберігається**: 21.5% запитів нижче confidence 0.9
+  (у старого варіанта 22.2%), тож панель «Confidence distribution» Теми 8
+  лишається інформативною, а не суцільною одиницею.
+
+Тобто 0.25 — це компроміс: досить шуму, щоб модель іноді вагалась і графіки
+Теми 8 жили, і замало, щоб сам джитер перекидав прикордонні зразки через межі
+класів (тоді хі-квадрат бачив би «дріфт» на чистих даних).
+
+**Перезбірка образу для правок генератора НЕ потрібна.** Скрипт лежить у
+ConfigMap, а не в образі, і `sklearn` у `mds06-ml-model:v4` уже є — на ньому
+працює сама модель:
 
 ```bash
-cd /Users/alexandervasileyko/Repos/goit/mds06-ml-monitoring
-$EDITOR k8s/loadgen.yaml                                    # правимо ConfigMap
-kubectl apply -f k8s/loadgen.yaml
-kubectl -n ml-demo rollout restart deploy/load-generator    # ConfigMap не перечитується сам
+$EDITOR k8s/model-api/loadgen.yaml
+git commit -am "loadgen: ..." && git push   # ArgoCD синкає сам; локальний
+                                            # kubectl apply відкотить selfHeal
+kubectl -n ml-demo rollout restart deploy/load-generator   # ConfigMap не перечитується сам
 kubectl -n ml-demo logs deploy/load-generator | head -3
 ```
 
+Перевірити розподіл без мережі — у скрипті є самоперевірка (`scipy` в образі
+моделі теж уже є):
+
+```bash
+kubectl -n ml-demo exec deploy/load-generator -- env SELFTEST=1 python /scripts/loadgen.py
+```
+
+Вона друкує частку битих payload і p-value KS по кожній із чотирьох ознак —
+усі мусять бути `ok`, жодного `ДРІФТ`.
+
 Не копіюйте масив Iris руками: скопійований масив розʼїдеться з еталоном
 експортера від першої ж правки.
+
+---
+
+## Тренування: `make train` і прапорець PROMOTE_TO_CHAMPION
+
+```bash
+make train                        # сітка за замовчуванням: 3 × 2 = 6 запусків
+make train N=300,500 D=3,5        # своя сітка
+EXPERIMENT=my-test make train     # в окремий експеримент
+```
+
+Усередині — `scripts/train.sh`: `envsubst` підставляє змінні в **один
+канонічний маніфест `k8s/trainer/job.yaml`** і віддає його `kubectl apply`.
+Раніше цей Job збирався двічі й по-різному — хірургією над YAML у python у
+двох різних скриптах. Два джерела правди на один обʼєкт розходяться при першій
+же зміні.
+
+Той самий файл читає Terraform Теми 10 (`yamldecode()`) і вставляє в крок
+`eks:runJob.sync` — тобто пайплайн тренує рівно те саме, що ви запускаєте
+руками.
+
+### ⚠️ Реєстрація і промоція — дві різні дії
+
+`apps/trainer/train.py` завжди робить `mlflow.register_model()` — нова версія
+зʼявляється в реєстрі. А от аліас `@champion` переставляється **за прапорцем**:
+
+```python
+PROMOTE_TO_CHAMPION = os.getenv("PROMOTE_TO_CHAMPION", "true").strip().lower() == "true"
+```
+
+| Хто запускає | Значення | Що відбувається |
+|---|---|---|
+| `make train` (Тема 9) | `true` | нова версія + `@champion` одразу. Студент хоче побачити модель у проді, а не в реєстрі |
+| Step Functions (Тема 10) | `false` | лише нова версія, аліас не чіпається. Рішення ухвалює quality gate ПІСЛЯ порівняння метрик |
+
+Порівняння саме з рядком `"true"` — навмисно: будь-яке інше значення
+(`false`, `0`, порожній рядок, друкарська помилка) означає **НЕ промоутити**.
+Безпечний бік за замовчуванням для автоматики.
+
+Якби `train.py` вішав аліас сам, gate Теми 10 не мав би що вирішувати: гірша
+модель уже була б у проді, і «відкат» означав би ще один ручний
+`set_registered_model_alias`.
+
+Два наслідки, які видно в логах Job:
+
+```
+📦 у реєстрі: iris-rf v7 — champion                        # make train
+📦 у реєстрі: iris-rf v8 — без аліаса (рішення за quality gate)   # пайплайн
+```
+
+І останній рядок stdout — подія `training_result` з полями `f1`,
+`champion_f1`, `promoted`. Це **контракт** із Темою 10: Lambda `evaluate`
+парсить саме його, а не ходить у MLflow (той за ClusterIP і ззовні
+недоступний). Порядок у `train.py` теж контрактний: `champion_f1()`
+викликається ДО `register_best()`, інакше при `PROMOTE_TO_CHAMPION=true` ми
+прочитали б уже нову модель і порівняли її саму з собою.
 
 ---
 
@@ -429,7 +545,8 @@ virginica 0.353 → 0.626.
 
 ## Дашборд
 
-`grafana/drift-dashboard.json`, `uid=model-quality-drift`, 13 панелей.
+`k8s/grafana-dashboards/drift-dashboard.json`, `uid=model-quality-drift`, 13 панелей.
+У ConfigMap потрапляє через `configMapGenerator` — див. крок 5 «Швидкого старту».
 
 | # | Панель | PromQL |
 |---|---|---|
@@ -508,7 +625,7 @@ current_window_size < 30
 | 22 | PostgreSQL як backend store | Так, але **не bitnami**. З 28.08.2025 версійні теги перенесено в `docker.io/bitnamilegacy` (заморожені), безкоштовно лишився лише мутабельний `latest` — саме тому в `bitnami/postgresql 18.8.6` стоїть `image.tag: latest`. Перевірено `curl`: `charts.bitnami.com/bitnami/postgresql-18.8.6.tgz` → **HTTP 403**. А `community-charts/mlflow` тягне цю залежність у своєму `Chart.yaml`, тому `postgresql.enabled: false` і `mysql.enabled: false` — **не опція, а вимога**. Беремо `groundhog2k/postgres` 1.6.8 з офіційним `docker.io/postgres:18.6` |
 | 21 | MinIO — розгортаємо в кластері | Так, чарт `minio-official/minio` 5.4.0. Але: **дефолт `resources.requests.memory` = 16Gi** (розрахований на bare-metal) при 3.2 GiB allocatable — под був би Pending НАЗАВЖДИ. І дефолт — `mode: distributed` з `replicas: 16`. Плюс `image.tag` **не підіймати**: чарт пінить `RELEASE.2024-12-18`, де вебконсоль ще ПОВНА, а після ~2025-04 адмін-функції вирізано в платний AIStor (лишився object browser). «Застарілий» чарт тут — перевага |
 | 24 | MLflow як Helm-чарт community-charts | Працює (1.11.4, appVersion 3.15.1). Але `serviceMonitor` чарта загорнутий у `{{ if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}`, а ArgoCD repo-server рендерить `helm template` **без доступу до кластера** → умова завжди false і ServiceMonitor не зʼявляється **взагалі**. Лікується `apiVersions: ["monitoring.coreos.com/v1", "monitoring.coreos.com/v1/ServiceMonitor"]` у `spec.source.helm` (двома рядками — Helm звіряє точний рядок). І `telemetryPath: /mlflow/metrics`, бо чарт віддає метрики не на `/metrics` |
-| 17 | «розгорнемо декларативно через ArgoCD» | Чарти й values — так, повністю. Але **самі Application НЕ під GitOps**: їх створює `kubectl apply`, тому правка `valuesObject` у Git не доїжджає в кластер без повторного apply (граблі №5 Теми 8, тут вони НЕ вилікувані). І як наслідок — `sync-wave` між цими Application є документацією, а не механізмом: анотація діє в межах одного синку. Лікується патерном **app-of-apps**; свідомо лишено як домашнє завдання |
+| 17 | «розгорнемо декларативно через ArgoCD» | Тепер справді повністю — патерн **app-of-apps**. Під GitOps не лише чарти й values, а й самі Application: `argocd/root.yaml` стежить за текою `argocd/apps/`. Наслідки: правка `valuesObject` доїжджає без повторного apply (граблі №5 Теми 8 вилікувані), видалений уручну Application повертає `selfHeal`, а `sync-wave` став механізмом, бо всі десять Application — ресурси ОДНОГО синку. Поза GitOps лишається рівно одна річ — Secret `mlflow-credentials`, і саме тому, що в ньому паролі |
 | — | (немає слайда) | **StorageClass `gp2` непрацездатний** — див. перший розділ. Це головна робота теми, і в презентації її немає зовсім |
 
 ---
@@ -516,19 +633,43 @@ current_window_size < 30
 ## Доступ
 
 ```bash
-kubectl -n mlflow      port-forward svc/mlflow 5000:80          # MLflow UI
-kubectl -n mlflow      port-forward svc/minio-console 9001:9001 # MinIO UI (логін з Secret)
-kubectl -n monitoring  port-forward svc/monitoring-grafana 3000:80   # admin/admin
+make ports          # усі тунелі + таблиця з логінами і статусом кожного сервісу
+make clean          # зупинити всі тунелі
+```
+
+| Сервіс | Локальний порт | Логін |
+|---|---|---|
+| MLflow | http://localhost:5001 | не потрібен |
+| MinIO console | http://localhost:9001 | `minioadmin` / `MINIO_PW` з `~/.mlflow-demo-credentials` |
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | не потрібен |
+| ArgoCD | https://localhost:8080 (⚠️ https) | admin / `argocd-initial-admin-secret` |
+| Дріфт-експортер | http://localhost:9101/metrics | сирі метрики |
+| ML-модель | http://localhost:8000 | `POST /predict` |
+| Loki | http://localhost:3100 | лише API, UI у Grafana |
+
+**⚠️ MLflow на 5001, а не 5000, і експортер на 9101, а не 9100.** Порти 5000 і
+7000 на macOS тримає AirPlay Receiver: тунель туди мовчки не встає, а `curl`
+отримує 403 від AirTunes. Це не помилка Kubernetes, і діагностується вона довго.
+Локальні порти для дріфту теж зсунуті (9101), щоб не збігтися з чимось уже
+запущеним на 9100. **Усередині кластера порти НЕ змінились**: Service mlflow
+слухає 80 і проксює на 5000, експортер віддає `/metrics` на 9100 — саме ці
+числа стоять у `k8s/trainer/job.yaml` і в ServiceMonitor.
+
+Ті самі тунелі руками, якщо `make ports` чимось не влаштовує:
+
+```bash
+kubectl -n mlflow      port-forward svc/mlflow 5001:80
+kubectl -n mlflow      port-forward svc/minio-console 9001:9001
+kubectl -n mlflow      port-forward svc/drift-exporter 9101:9100
+kubectl -n monitoring  port-forward svc/monitoring-grafana 3000:80
 kubectl -n monitoring  port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
 kubectl -n logging     port-forward svc/loki 3100:3100
-kubectl -n mlflow      port-forward deploy/drift-exporter 9100:9100  # сирі метрики
 
 # креденшели MinIO
 kubectl -n mlflow get secret mlflow-credentials -o jsonpath='{.data.rootUser}' | base64 -d; echo
 kubectl -n mlflow get secret mlflow-credentials -o jsonpath='{.data.rootPassword}' | base64 -d; echo
 ```
-
-Або `ports.sh` із репозиторію Теми 8 — він піднімає все разом.
 
 ---
 
@@ -556,17 +697,23 @@ kubectl -n mlflow get secret mlflow-credentials -o jsonpath='{.data.rootPassword
 Terraform про них не знає, а в модуля EKS `preserve = true` за замовчуванням.
 
 ```bash
-kubectl delete -f argocd/                                # спершу Application:
-                                                         # finalizer прибере їхні ресурси
-kubectl delete -n monitoring configmap drift-dashboard
-kubectl delete pvc --all -n mlflow                       # ОБОВʼЯЗКОВО: у postgres
-                                                         # whenDeleted: Retain, сам не зникне
+make down                                # видаляє ОДИН ресурс — argocd/root.yaml.
+                                         # Його фіналайзер каскадом зносить десять
+                                         # дочірніх Application, а їхні — усе, що
+                                         # вони створили. Дашборди зникають разом
+                                         # з ml-dashboard, окремий delete не потрібен.
+                                         # Разом з namespace mlflow зникають і PVC,
+                                         # а gp3 має reclaimPolicy: Delete — тобто
+                                         # EBS-томи мають піти слідом. МАЮТЬ, але
+                                         # перевіряти це треба очима:
 aws ec2 describe-volumes --filters Name=status,Values=available \
   --region eu-central-1 --query 'Volumes[].VolumeId'      # мусить бути []
-kubectl delete ns mlflow --ignore-not-found
 aws ecr delete-repository --repository-name mds06-mlflow-tools --region eu-central-1 --force
-cd terraform && terraform destroy
+make cluster-down                        # terraform destroy у terraform/cluster
 ```
+
+⚠️ `make down` треба зробити **до** `make cluster-down`: інакше LoadBalancer-и,
+створені Service-ами, лишаться в AWS і `terraform destroy` не зможе видалити VPC.
 
 Забутий 8 GiB gp3 тихо тягне **$0.76/міс роками**. Це і є справжня фінансова
 міна теми — не тариф, а осиротілі томи.
@@ -593,35 +740,72 @@ $2.30/добу, NAT Gateway $1.25/добу. Базова ціна кластер
 
 ## Структура репозиторію
 
+Після злиття пʼятьох репозиторіїв усе, чого торкається Тема 9, лежить в одному
+дереві. Тут — лише те, що стосується саме цієї теми.
+
 ```
+Makefile                 єдина точка входу: make help
 argocd/
-  app-minio.yaml         wave 0   minio-official/minio 5.4.0
-  app-postgres.yaml      wave 0   groundhog2k/postgres 1.6.8
-  app-mlflow.yaml        wave 2   community-charts/mlflow 1.11.4
-  app-drift.yaml         wave 3   дивиться на теку k8s/ (kustomize)
-  README.md              порядок застосування і що свідомо не зроблено
-k8s/
-  namespace.yaml
-  drift-exporter.yaml    Deployment + Service + ServiceMonitor
-  secret-example.yaml    ШАБЛОН: 11 ключів із заглушками + команда створення.
-                         Навмисно НЕ в kustomization — інакше ArgoCD затер би
-                         реальні паролі рядком «ЗАМІНІТЬ...»
-  kustomization.yaml     namespace: mlflow + тег образу в одному місці
-train/
-  train.py        сітка 3×2 = 6 запусків, log_param/metric/artifact/model,
-                         реєстрація найкращого як iris-rf@champion
-  requirements.txt       піни: mlflow 3.15.1, boto3, sklearn 1.9.0, numpy 2.5.2,
-                         scipy 1.18.0, pandas, matplotlib, prometheus-client
-  Dockerfile             КОНТРАКТНИЙ образ mds06-mlflow-tools:v1 (обидва скрипти)
-drift/
-  drift_exporter.py      Loki → ks_2samp / chisquare → Prometheus
-  test_drift.py          самоперевірка логіки (лежить і в образі)
-  requirements.txt       строга підмножина train/
-  Dockerfile             необовʼязковий легкий образ, ~330 MiB
-grafana/
-  drift-dashboard.json   13 панелей
-  dashboard-configmap.yaml
-EXERCISES.md             8 вправ для студентів
+  root.yaml              ⭐ app-of-apps: ОДИН apply на весь стек
+  apps/
+    app-monitoring.yaml      wave 0   kube-prometheus-stack (несе CRD)
+    app-minio.yaml           wave 0   minio-official/minio 5.4.0
+    app-postgres.yaml        wave 0   groundhog2k/postgres 1.6.8
+    app-loki.yaml            wave 1   Loki
+    app-log-collector.yaml   wave 1   Alloy: логи моделі -> Loki
+    app-react.yaml           wave 1   демо GitOps Теми 6
+    app-mlflow.yaml          wave 2   community-charts/mlflow 1.11.4
+    app-ml-model.yaml        wave 2   сервіс моделі + генератор трафіку
+    app-dashboard.yaml       wave 2   дашборди Grafana
+    app-drift.yaml           wave 3   дріфт-експортер
+k8s/                     те, що синкає ArgoCD (kustomize)
+  drift-exporter/
+    drift-exporter.yaml      Deployment + Service + ServiceMonitor
+    namespace.yaml
+    secret-example.yaml      ШАБЛОН: 11 ключів із заглушками + команда створення.
+                             Навмисно НЕ в kustomization — інакше ArgoCD затер би
+                             реальні паролі рядком «ЗАМІНІТЬ...»
+    kustomization.yaml       namespace: mlflow + тег образу (newTag: v2)
+  grafana-dashboards/
+    drift-dashboard.json     13 панелей, uid=model-quality-drift
+    ml-model-dashboard.json  дашборд Теми 8
+    kustomization.yaml       configMapGenerator: ConfigMap робиться З .json,
+                             рукописного dashboard-configmap.yaml більше немає
+  model-api/
+    loadgen.yaml             ⭐ ConfigMap loadgen-script: справжні рядки Iris,
+                             JITTER=0.25, ручка DRIFT_SHIFT
+    deployment.yaml service.yaml servicemonitor.yaml kustomization.yaml (newTag: v4)
+  trainer/
+    job.yaml                 ⭐ КАНОНІЧНИЙ Job тренування. ArgoCD його НЕ синкає:
+                             тренування запускають подією, а не фактом наявності
+                             в Git. Три споживачі: make train, make up, Тема 10
+apps/                    код і Dockerfile
+  trainer/
+    train.py                 сітка 3×2 = 6 запусків, log_param/metric/artifact/model,
+                             реєстрація найкращого + прапорець PROMOTE_TO_CHAMPION
+    promote.py               перевішує @champion (Тема 10) — саме він відрізняє v2 від v1
+    requirements.txt         піни: mlflow 3.15.1, boto3, sklearn 1.9.0, numpy 2.5.2,
+                             scipy 1.18.0, pandas, matplotlib, prometheus-client
+    Dockerfile               КОНТРАКТНИЙ образ mds06-mlflow-tools:v2 (обидва скрипти),
+                             збірка з КОРЕНЯ репозиторію
+  drift-exporter/
+    drift_exporter.py        Loki → ks_2samp / chisquare → Prometheus
+    test_drift.py            самоперевірка логіки (лежить і в образі)
+    requirements.txt         строга підмножина apps/trainer/
+    Dockerfile               необовʼязковий легкий образ, ~330 MiB
+  model-api/                 сервіс моделі Теми 8 (образ mds06-ml-model:v4)
+scripts/
+  up.sh down.sh ports.sh status.sh train.sh build-images.sh
+                             те, що викликають цілі Makefile
+terraform/cluster/
+  ebs-csi-iam.tf           IAM-роль для EBS CSI + Pod Identity
+  variables.tf             node_desired_size / node_max_size = 3
+deploy/0-storage/
+  storageclass-gp3.yaml    ⭐ WaitForFirstConsumer, reclaimPolicy: Delete
+  smoke-test.yaml          40-секундний тест, що сховище справді працює
+docs/
+  09-mlflow-drift.md       цей файл
+  exercises.md             вправи Тем 9 і 10
 ```
 
 Самоперевірку експортера можна прогнати прямо в кластері, не відтворюючи venv:
@@ -629,10 +813,6 @@ EXERCISES.md             8 вправ для студентів
 ```bash
 kubectl -n mlflow exec deploy/drift-exporter -- python test_drift.py
 ```
-
-Сховище живе в іншому репозиторії, бо це Terraform:
-`mds06-kuber-from-scratch/terraform/ebs-csi-iam.tf` і
-`mds06-kuber-from-scratch/deploy/0-storage/storageclass-gp3.yaml`.
 
 ---
 

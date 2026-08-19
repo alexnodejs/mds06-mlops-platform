@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Піднімає тунелі до всіх сервісів Тем 6-9 і друкує таблицю з логінами.
+# Піднімає тунелі до всіх сервісів і друкує таблицю з логінами.
+# Викликається як `make ports` і в кінці `make up`.
 #
 #   ./ports.sh          підняти + таблиця
 #   ./ports.sh --stop   зупинити всі
@@ -34,6 +35,7 @@ if [[ "${1:-}" != "--table" ]]; then
   pf argocd     argocd-server                         8080 443   "ArgoCD"
   pf ml-demo    ml-model                              8000 80    "ML-модель"
   pf logging    loki                                  3100 3100  "Loki"
+  pf demo-react react-app                             8087 80    "React (GitOps)"
   sleep 9
 fi
 
@@ -52,7 +54,7 @@ st() { # порт -> ✅/❌
 cat <<EOF
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                     СЕРВІСИ — ТЕМИ 6-9                                       ║
+║                     СЕРВІСИ — ТЕМИ 6-10                                      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
   $(st 5001 /health) MLflow        http://localhost:5001              логін не потрібен
@@ -71,8 +73,14 @@ cat <<EOF
   $(st 9101 /metrics) Дріфт         http://localhost:9101/metrics      сирі метрики
   $(st 8000 /healthz) ML-модель     http://localhost:8000              POST /predict
   $(st 3100 /ready) Loki          http://localhost:3100              лише API, UI у Grafana
+  $(st 8087 /) React         http://localhost:8087              демо GitOps, Тема 6
 
 ──────────────────────────────────────────────────────────────────────────────
+  ТЕМА 10 — тунелю не потребує, усе в консолі AWS
+    make pipeline-run                    запустити тренування пайплайном
+    make pipeline-run N=10 D=1           свідомо гірша модель -> ВІДХИЛЕНО
+    Граф виконань: https://eu-central-1.console.aws.amazon.com/states/home
+
   ДЕМО ДРІФТУ
     kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0.8   # увімкнути
     kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0.0   # вимкнути

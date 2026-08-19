@@ -21,6 +21,21 @@ N=$(kubectl get nodes --no-headers | wc -l | tr -d ' ')
 [[ "$N" -ge 3 ]] || echo "  ⚠️  нод лише $N; стек розрахований на 3"
 echo "  ✅ ArgoCD, StorageClass gp3, нод: $N"
 
+# ⭐ Найдорожча помилка на занятті: підняти стек, чекати 10 хвилин і лише тоді
+# зрозуміти, що ArgoCD дивиться в репозиторій, якого не існує, або в гілку без
+# останнього коміта. ArgoCD читає Git, а не вашу файлову систему — локальні
+# зміни для нього не існують, доки не запушені.
+REPO=$(grep -m1 'repoURL:' "$HERE/argocd/root.yaml" | awk '{print $2}')
+git -C "$HERE" ls-remote "$REPO" HEAD >/dev/null 2>&1 \
+  || fail "ArgoCD не зможе прочитати $REPO — репозиторій не існує, або він приватний і ArgoCD не має креденшелів"
+LOCAL=$(git -C "$HERE" rev-parse HEAD 2>/dev/null)
+REMOTE=$(git -C "$HERE" ls-remote "$REPO" HEAD 2>/dev/null | cut -f1)
+if [[ -n "$LOCAL" && "$LOCAL" != "$REMOTE" ]]; then
+  echo "  ⚠️  локальний HEAD (${LOCAL:0:7}) != віддалений (${REMOTE:0:7})"
+  echo "      ArgoCD візьме ВІДДАЛЕНУ версію. Якщо це не те, чого ви хочете: git push"
+fi
+echo "  ✅ репозиторій доступний: $REPO"
+
 echo
 echo "══ 2. Secret mlflow-credentials ══"
 # Паролі живуть у файлі під $HOME, а не в Git. Якщо файл є — перевикористовуємо,

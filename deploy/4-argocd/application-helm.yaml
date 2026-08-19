@@ -4,8 +4,15 @@
 # Головна думка: для ArgoCD не важливо, ЧИМ спаковано застосунок.
 # Kustomize, Helm, звичайні YAML — джерело істини все одно Git.
 #
-# Порівняйте цей файл із application-kustomize.yaml: різниця тільки
-# в блоці source. Решта — та сама.
+# Порівняйте цей файл із application-kustomize.yaml — різниця рівно в трьох
+# місцях (перевірити: `diff application-kustomize.yaml application-helm.yaml`):
+#   1. metadata.name:          nginx-gitops -> nginx-gitops-helm
+#   2. spec.source:            інший path + блок helm
+#   3. destination.namespace:  demo-gitops -> demo-gitops-helm
+# Пункти 1 і 3 обовʼязкові: два Application з однаковим іменем у namespace
+# argocd не існують, а спільний цільовий namespace дав би два контролери,
+# що перетирають ресурси один одного.
+# syncPolicy (automated + CreateNamespace + retry) — ідентична, посимвольно.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -18,7 +25,7 @@ spec:
   project: default
 
   source:
-    # 🔴 ЗАМІНІТЬ НА СВІЙ РЕПОЗИТОРІЙ
+    # 🔴 ВАШ РЕПОЗИТОРІЙ (підставляє `make init REPO=...`)
     repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
     targetRevision: HEAD
     path: deploy/2-helm/nginx-demo

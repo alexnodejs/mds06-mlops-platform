@@ -3,7 +3,7 @@
 **Тема 6. Деплой ML-сервісів у Kubernetes (EKS) — практична частина**
 Курс MLOps CI/CD 2.0
 
-Продовження [README.md](README.md) (Тема 5). Кластер уже піднято — тепер
+Продовження [05-eks-terraform.md](05-eks-terraform.md) (Тема 5). Кластер уже піднято — тепер
 розбираємось, **як саме** в нього доставляти застосунки.
 
 Ми задеплоїмо **один і той самий nginx чотирма різними способами**. Кожен
@@ -99,7 +99,7 @@ deploy/
 > На `2 × t3.medium` максимум ~34 поди. Порахуємо: система 6 + ArgoCD 7 +
 > усі шість демо 13 = **26**. Влізає, але без великого запасу.
 > Якщо побачите поди в `Pending` — підніміть `node_desired_size` до 3
-> у `terraform/variables.tf` і зробіть `terraform apply`.
+> у `terraform/cluster/variables.tf` і зробіть `terraform apply`.
 
 ---
 
@@ -373,7 +373,7 @@ kubectl apply -k <тека>
 ### Що робить overlay
 
 ```yaml
-# overlays/dev/kustomization.yaml
+# overlays/dev/kustomization.yaml (скорочено — без коментарів)
 resources:
   - namespace.yaml
   - ../../base        # ← база НЕ копіюється, лише посилання
@@ -381,7 +381,9 @@ resources:
 namespace: demo-dev   # проставити namespace усім ресурсам
 namePrefix: dev-      # nginx-demo -> dev-nginx-demo
 labels:
-  - pairs: { env: dev }
+  - includeTemplates: true   # ← без цього рядка мітка ляже ЛИШЕ на Deployment,
+    pairs:                   #   а в spec.template (тобто на поди) — ні, і
+      env: dev               #   `kubectl get pods -l env=dev` дасть "No resources found"
 replicas:
   - name: nginx-demo
     count: 2
@@ -579,20 +581,35 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ### 4.4. Вказуємо ArgoCD на свій репозиторій
 
-**Обовʼязковий крок.** У файлах `deploy/4-argocd/*.yaml` стоїть заглушка.
+**Обовʼязковий крок.** У `deploy/4-argocd/*.yaml` зараз стоїть репозиторій
+автора — `https://github.com/alexnodejs/mds06-mlops-platform.git`. Він
+публічний, тож ArgoCD навіть засинхронізується з нього. Але тоді ви
+задеплоїте ЧУЖИЙ стан і крок 4.7 (`git push` → ArgoCD підхопив) не спрацює:
+пушити в чужий репозиторій ви не можете.
+
+Підставити свій — одна ціль Makefile:
 
 ```bash
-# Підставити свій URL автоматично (macOS)
-export REPO=$(git remote get-url origin)
-sed -i '' "s|https://github.com/alexnodejs/mds06-mlops-platform.git|$REPO|" \
-  deploy/4-argocd/application-kustomize.yaml \
-  deploy/4-argocd/application-helm.yaml
+make init REPO=$(git remote get-url origin)
+```
 
+Усередині `scripts/init.sh`: заміняє репозиторій автора на ваш у всіх
+`*.yaml`/`*.yml`/`*.md` і заодно підставляє ваш AWS-акаунт (номер акаунта
+бере з `aws sts get-caller-identity`, тому AWS-профіль має бути налаштований).
+Робиться **один раз** на весь курс — ті самі `repoURL` потрібні Темам 8-10.
+
+```bash
 # Перевірити
 grep repoURL deploy/4-argocd/*.yaml
 ```
 
-> На Linux: `sed -i` без `''`.
+> ⚠️ **ArgoCD читає Git, а не вашу теку.** Після `make init` зміни треба
+> закомітити і **запушити**, інакше ArgoCD відповість
+> `ComparisonError: path does not exist` — він дивиться в запушену гілку:
+>
+> ```bash
+> git commit -am "init: свій репозиторій" && git push
+> ```
 
 ### 4.5. Створюємо Application
 
@@ -761,9 +778,30 @@ kill %1 %2 %3 %4 %5 %6
 Один застосунок. Шість сторінок. Чотири способи доставки.
 
 ```bash
-# Подивитись усе разом
-kubectl get pods -A -l app=nginx-demo
-kubectl get ns -l lesson=topic-6
+# Усі шість деплоїв одним рядком. Фільтр за іменем, а не за міткою — чому,
+# нижче.
+kubectl get pods -A | grep nginx-demo
+```
+
+> **Чому не `kubectl get pods -A -l app=nginx-demo`.** У способів різні
+> мітки. `kubectl` і всі три Kustomize-overlay ставлять `app=nginx-demo`
+> (мітка з `base/deployment.yaml`), а Helm-чарт — стандартні
+> `app.kubernetes.io/*`. Тобто селектор `app=nginx-demo` покаже **4 поди з 6**:
+> обидва Helm-деплої (крок 2 і крок 4.8) мовчки випадуть. Одним селектором
+> їх не обʼєднати — `-l` не вміє АБО між різними ключами. Якщо треба саме
+> за мітками, це два запити:
+>
+> ```bash
+> kubectl get pods -A -l app=nginx-demo                     # 1 + 3 (dev, prod, gitops)
+> kubectl get pods -A -l app.kubernetes.io/name=nginx-demo  # 2 + 4 (ArgoCD+Helm)
+> ```
+
+Те саме з namespace: мітку `lesson: topic-6` ми прописали лише в тих, що
+створюємо своїм YAML.
+
+```bash
+kubectl get ns -l lesson=topic-6   # 4 з 6: demo-kubectl, demo-dev, demo-prod, demo-gitops
+kubectl get ns | grep demo-        # усі 6 — на це і покладайтесь при прибиранні
 ```
 
 ### Порівняння (слайд 14)
@@ -825,12 +863,19 @@ kubectl get ns | grep -E "demo-|argocd"   # має бути порожньо
 ```
 
 > ⚠️ **Не покладайтесь тут на `kubectl get ns -l lesson=topic-6`.**
-> Namespace `demo-gitops-helm` створив сам ArgoCD через
-> `CreateNamespace=true`, і мітки `lesson` на ньому **немає** — фільтр за
-> міткою його не покаже, і ви вирішите, що прибрали все. Перевіряйте
-> звичайним `grep`, як вище.
+> Мітка стоїть лише в тих чотирьох namespace, які ми оголосили своїм YAML:
+> `demo-kubectl` (`deploy/1-kubectl/00-namespace.yaml`) і `demo-dev`,
+> `demo-prod`, `demo-gitops` (`namespace.yaml` у кожному overlay).
+>
+> Без мітки лишаються три:
+> - `demo-helm` і `demo-helm-prod` — їх створив `helm install --create-namespace`,
+>   а він робить порожній Namespace, без наших міток;
+> - `demo-gitops-helm` — його створив ArgoCD через `CreateNamespace=true`.
+>
+> Тобто фільтр за міткою покаже 4 з 6 (7 із необовʼязковим `nginx-prod`),
+> і ви вирішите, що прибрали все. Перевіряйте звичайним `grep`, як у пункті 5.
 
-Далі — розділ 13 у [README.md](README.md#13--прибирання-і-контроль-витрат):
+Далі — розділ 13 у [05-eks-terraform.md](05-eks-terraform.md#13--прибирання-і-контроль-витрат):
 `terraform destroy`.
 
 > Оскільки тут усі сервіси `ClusterIP`, жодного AWS Load Balancer не

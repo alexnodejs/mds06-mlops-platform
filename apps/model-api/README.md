@@ -1,13 +1,20 @@
 # ML-сервіс: класифікація Iris (FastAPI + Prometheus + JSON-логи)
 
 Мінімальний ML-сервіс для теми «Моніторинг ML у Kubernetes». Модель —
-`RandomForestClassifier` на вбудованому датасеті Iris; тренується **під час
-збірки образу**, у рантаймі немає ні мережі, ні томів.
+`RandomForestClassifier` на вбудованому датасеті Iris.
+
+Джерела моделі — рівно два, у такому порядку (`app.py`):
+
+1. **реєстр MLflow** `models:/iris-rf@champion` — якщо задано `MLFLOW_TRACKING_URI`.
+   Так воно працює в кластері з Теми 9: промоція аліаса `@champion` == деплой,
+   сервіс перечитує реєстр раз на `MODEL_RELOAD_SECONDS`;
+2. **`model.pkl`, зашитий в образ** — резерв. Тренується `RUN python train.py`
+   **під час збірки**, тож под піднімається навіть тоді, коли MLflow лежить.
 
 | Файл | Що робить |
 |---|---|
 | `train.py` | тренує модель, кладе `model.pkl` (модель + метадані) поруч із собою |
-| `app.py` | FastAPI: `/`, `/predict`, `/healthz`, `/metrics` |
+| `app.py` | FastAPI: `/`, `/predict`, `/healthz`, `/metrics`, `POST /reload` (перечитати `@champion` без чекання на опитувач) |
 | `requirements.txt` | піни версій (перевірені на PyPI 2026-08-12) |
 | `Dockerfile` | одноетапна збірка на `python:3.13-slim`, uid 1000 |
 
@@ -41,21 +48,32 @@ curl -s localhost:8000/metrics | grep predict_
 
 ## Збірка образу
 
-Мак розробника — ARM, ноди EKS — x86_64. Без `--platform linux/amd64` под падає
-з `exec format error`.
+Штатний шлях — з кореня репозиторію, разом з іншими двома образами курсу:
 
 ```bash
-ECR=832828869208.dkr.ecr.eu-central-1.amazonaws.com
-aws ecr get-login-password --region eu-central-1 \
-  | docker login --username AWS --password-stdin $ECR
-
-docker buildx build --platform linux/amd64 -t $ECR/mds06-ml-model:v1 --push .
+make images        # login у ECR + збірка mds06-ml-model:v4,
+                   # mds06-mlflow-tools:v2, mds06-react-gitops:v2
 ```
+
+Усередині (`scripts/build-images.sh`) для цього сервісу виконується:
+
+```bash
+docker buildx build --platform linux/amd64 \
+  -f apps/model-api/Dockerfile \
+  -t $REGISTRY/mds06-ml-model:v4 --push apps/model-api
+```
+
+`--platform linux/amd64` **обовʼязковий**: мак розробника ARM, ноди EKS x86_64.
+Без нього под падає з `exec format error`, і це виглядає як зламаний образ.
+
+Тег `v4` мусить збігатися з `newTag` у `k8s/model-api/kustomization.yaml` —
+інакше ArgoCD синкне Deployment на неіснуючий тег і под стане `ImagePullBackOff`.
 
 Локально перевірити зібраний образ:
 
 ```bash
-docker run --rm -p 8000:8000 --platform linux/amd64 $ECR/mds06-ml-model:v1
+ECR=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com
+docker run --rm -p 8000:8000 --platform linux/amd64 $ECR/mds06-ml-model:v4
 ```
 
 Розмір образу ~414 MiB на диску / ~133 MB на pull. З них 62% — ML-стек
@@ -70,7 +88,8 @@ docker run --rm -p 8000:8000 --platform linux/amd64 $ECR/mds06-ml-model:v1
 | `predict_latency_seconds` | Histogram | — |
 | `predict_confidence` | Histogram | `predicted_class` |
 | `http_requests_total` | Counter | `method`, `path`, `status` |
-| `model_info` | Gauge (=1) | `version`, `model_type` |
+| `model_info` | Gauge (=1) | `version`, `model_type`, `source` (`baked` \| `registry`) |
+| `model_reload_total` | Counter | `result` |
 
 ### Розбіжність із презентацією (слайд 37) — не приховуємо, пояснюємо
 
@@ -117,7 +136,7 @@ end-to-end (на нативному x86_64 очікувано 2-3 мс). Деф�
 {"ts":"2026-08-12T20:04:54+0000","level":"INFO","event":"predict",
  "request_id":"11090354f0cc...","input":{"sepal_length":5.1,"sepal_width":3.5,
  "petal_length":1.4,"petal_width":0.2},"prediction":"setosa","confidence":1.0,
- "latency_ms":3.22}
+ "inference_ms":3.22}
 ```
 
 Запити в Loki:
@@ -142,5 +161,8 @@ end-to-end (на нативному x86_64 очікувано 2-3 мс). Деф�
   `container has runAsNonRoot and image has non-numeric user`;
 * порт у Service **мусить мати імʼя** (`http`) — `ServiceMonitor` матчить порт
   за іменем, а не за номером;
-* жодних PVC: у цьому кластері єдиний StorageClass `gp2` використовує вилучений
-  in-tree провізіонер `kubernetes.io/aws-ebs`, тож будь-який PVC зависне в Pending.
+* жодних PVC: сервіс stateless, модель приходить або з реєстру MLflow, або з
+  образу. Якщо PVC колись знадобиться — тільки на StorageClass `gp3`
+  (`deploy/0-storage/storageclass-gp3.yaml`). Дефолтний `gp2` від EKS мертвий:
+  його in-tree провізіонер `kubernetes.io/aws-ebs` вилучено в Kubernetes 1.31,
+  і PVC зависає в `Pending` назавжди, без жодної події про помилку.

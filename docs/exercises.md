@@ -1,9 +1,11 @@
-# Вправи: MLflow, Model Registry і виявлення дріфту
+# Вправи: MLflow, дріфт і автоматизоване тренування
 
-**Тема 9. Моніторинг якості моделей та відстеження експериментів**
+**Теми 9 і 10.** Вправи 1-8 — MLflow, Model Registry, виявлення дріфту
+(`docs/09-mlflow-drift.md`). Вправи 9-12 — пайплайн Step Functions
+(`docs/10-automated-training.md`).
 
-Вісім вправ за зростанням складності. Усе виконується на живому стеку з
-`README.md` — жодних вигаданих сервісів, усі імена реальні.
+Дванадцять вправ за зростанням складності. Усе виконується на живому стеку —
+жодних вигаданих сервісів, усі імена реальні.
 
 > **Правило номер один на весь курс:** дивіться колонку **READY**, а не STATUS.
 > `Running` при `READY 1/3` означає, що под мертвий на дві третини, а ArgoCD
@@ -14,23 +16,22 @@
 ## Перед початком
 
 ```bash
-# 1. Стек Теми 9 живий?
-kubectl -n mlflow get pods
-# Очікувано 4 поди, усі READY 1/1: postgres-0, minio-*, mlflow-*, drift-exporter-*
+# 1. Увесь стек живий?
+make status
+# Очікувано в mlflow 4 поди READY 1/1: postgres-0, minio-*, mlflow-*, drift-exporter-*
+# Якщо стека немає взагалі — make up (~10 хв)
 
-# 2. Стек Теми 8 живий? (без нього немає ні трафіку, ні Loki, ні дріфту)
-kubectl -n ml-demo get pods
-kubectl -n logging get pods
+# 2. Тунелі + таблиця з логінами і статусом кожного сервісу
+make ports
 
-# 3. Тунелі
-kubectl -n mlflow     port-forward svc/mlflow 5000:80 &
-kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80 &     # admin/admin
-kubectl -n mlflow     port-forward deploy/drift-exporter 9100:9100 &
-
-# 4. Генератор трафіку увімкнений і БЕЗ дріфту
+# 3. Генератор трафіку увімкнений і БЕЗ дріфту
 kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0
-kubectl -n ml-demo scale deploy/load-generator --replicas=1
+kubectl -n ml-demo scale deploy/load-generator --replicas=1   # або make loadgen
 ```
+
+**⚠️ MLflow на 5001, а не 5000, дріфт-експортер на 9101, а не 9100.** Порти
+5000 і 7000 на macOS тримає AirPlay Receiver — тунель туди мовчки не встає, а
+`curl` отримує 403 від AirTunes. Усі команди нижче вже враховують це.
 
 ### Шаблон, який знадобиться у вправах 3, 4 і 8
 
@@ -38,7 +39,8 @@ kubectl -n ml-demo scale deploy/load-generator --replicas=1
 `envFrom`**. Прочитайте один раз — далі просто копіюйте виклики `tool`.
 
 ```bash
-IMG=832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v1
+# Реєстр беремо з ваших креденшелів, а не зашиваємо чужий номер акаунта.
+IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v2
 
 tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
   kubectl -n mlflow run "$1" --rm -i --restart=Never --image="$IMG" \
@@ -56,7 +58,9 @@ tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
 
 ### Контракт скриптів, на який спираються вправи
 
-`train/train.py` — єдине джерело правди; якщо імена розійшлися, вірте коду.
+`apps/trainer/train.py` — єдине джерело правди; якщо імена розійшлися, вірте
+коду. Job збирається з одного канонічного маніфеста `k8s/trainer/job.yaml`
+(`envsubst` у `scripts/train.sh`).
 
 | Що | Значення |
 |---|---|
@@ -67,7 +71,9 @@ tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
 | `log_metric` | `accuracy`, `precision`, `recall`, `f1` (усі macro) |
 | `log_artifact` | `confusion_matrix.png`, `reference.csv` |
 | `log_model` | sklearn-модель під імʼям `model`, зі `signature` та `input_example` |
-| Registry | найкращий за `(f1, accuracy)` → модель `iris-rf`, аліас `champion` |
+| Registry | найкращий за `(f1, accuracy)` → модель `iris-rf`, нова версія завжди |
+| `PROMOTE_TO_CHAMPION` | `true` (дефолт, `make train`) → аліас `@champion` переїжджає одразу. `false` (пайплайн Теми 10) → версія реєструється БЕЗ аліаса, рішення за quality gate |
+| Останній рядок stdout | подія `training_result` з `f1`, `champion_f1`, `promoted` — **контракт** із Lambda `evaluate` Теми 10 |
 
 ---
 
@@ -82,58 +88,38 @@ tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
 Спершу базовий прогін — сітка за замовчуванням, 6 запусків в одному поді:
 
 ```bash
-run_train() {   # run_train <суфікс-імені> <GRID_N_ESTIMATORS> <GRID_MAX_DEPTH>
-cat <<EOF | kubectl apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: iris-train-$1
-  namespace: mlflow
-spec:
-  ttlSecondsAfterFinished: 900        # Job прибере себе сам через 15 хв
-  backoffLimit: 1
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: train
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v1
-          imagePullPolicy: Always     # мутабельний тег + IfNotPresent = старий код з кешу ноди
-          command: ["python", "train.py"]
-          env:
-            - name: GRID_N_ESTIMATORS
-              value: "$2"
-            - name: GRID_MAX_DEPTH
-              value: "$3"
-            - name: MLFLOW_EXPERIMENT_NAME
-              value: "iris-rf"
-          envFrom:
-            - secretRef:
-                name: mlflow-credentials     # усі 5 змінних клієнта одним рядком
-          resources:
-            requests: { cpu: 200m, memory: 512Mi }
-            limits:   { memory: 1Gi }
-EOF
-  kubectl -n mlflow wait --for=condition=complete job/iris-train-$1 --timeout=600s
-  kubectl -n mlflow logs job/iris-train-$1 | tail -8
-}
-
-# ЗАПУСКАЙТЕ ПО ОДНОМУ. Слоти подів у кластері на межі (див. README): два Job
-# одночасно = один Pending, і wait висітиме 10 хвилин.
-run_train base "50,100,200" "2,none"
-
-# А тепер ваша власна сітка — і зробіть її такою, щоб метрики РОЗІЙШЛИСЬ
-run_train tiny "5,500" "1,none"
+make train
 ```
 
-Далі — MLflow UI на http://localhost:5000: експеримент `iris-rf`. Через
+Усередині `scripts/train.sh` підставляє змінні через `envsubst` в **один
+канонічний маніфест** `k8s/trainer/job.yaml`, чекає завершення Job і друкує
+таблицю результатів. Своя сітка — двома змінними:
+
+```bash
+# ЗАПУСКАЙТЕ ПО ОДНОМУ. Слоти подів у кластері на межі (див. docs/09-mlflow-drift.md):
+# два Job одночасно = один Pending, і скрипт висітиме 5 хвилин, поки не здасться.
+make train N=5,500 D=1,none      # зробіть сітку такою, щоб метрики РОЗІЙШЛИСЬ
+```
+
+Ще дві ручки того самого скрипта, які знадобляться далі:
+
+```bash
+EXPERIMENT=my-test make train    # в окремий експеримент MLflow
+PROMOTE=false make train         # зареєструвати версію, але НЕ чіпати @champion
+```
+
+`PROMOTE=false` — рівно те, що робить пайплайн Теми 10. Запустіть його один раз
+і подивіться на останній рядок виводу: замість `— champion` там буде
+`— без аліаса (рішення за quality gate)`.
+
+Далі — MLflow UI на http://localhost:5001: експеримент `iris-rf`. Через
 **Columns** додати `n_estimators`, `max_depth`, `f1`; клік на заголовок
 колонки — сортування.
 
 ### Що має вийти
-10 запусків `FINISHED` (6 + 4). У логах Job — рядки
-`{"event": "run_finished", ...}` по одному на запуск, потім `best_run` і
-`registered`. У розділі **Models** зʼявиться `iris-rf` з аліасом `champion`.
+10 запусків `FINISHED` (6 + 4). `make train` друкує по рядку на запуск, потім
+`⭐ найкращий` і `📦 у реєстрі`. У розділі **Models** зʼявиться `iris-rf` з
+аліасом `champion`.
 
 ### На що звернути увагу
 - **`max_depth=1` — єдиний параметр, який тут по-справжньому щось ламає.**
@@ -149,10 +135,18 @@ run_train tiny "5,500" "1,none"
   щоразу, тож після `tiny` champion може вказувати на іншу версію. У вправі 3
   ми на це подивимось уважніше — і саме тут захована найпоширеніша аварія
   Model Registry.
-- `ttlSecondsAfterFinished` — не косметика: Job без нього лежить завершеним
-  вічно і **займає запис в etcd**, а його под — слот, поки ви його не приберете.
+- `ttlSecondsAfterFinished: 1800` у `k8s/trainer/job.yaml` — не косметика: Job
+  без нього лежить завершеним вічно і **займає запис в etcd**, а його под —
+  слот, поки ви його не приберете. 1800 c, а не менше, тому що Step Functions
+  Теми 10 читає статус Job уже ПІСЛЯ завершення.
+- **Цей самий файл читає Terraform Теми 10** через `yamldecode()` і вставляє в
+  крок `eks:runJob.sync`. Тобто пайплайн тренує рівно те саме, що ви щойно
+  запустили руками. Раніше Job збирався двічі й по-різному — хірургією над YAML
+  у python у двох скриптах, і два джерела правди розходились при першій зміні.
 - Якщо Job у `ImagePullBackOff`: приватний ECR працює без `imagePullSecret`
   лише тому, що на node role висить `AmazonEC2ContainerRegistryReadOnly`.
+  Перевірте, що тег у ECR збігається з тим, що підставив `train.sh`
+  (`mds06-mlflow-tools:v2`) — зібрати: `make images`.
   Якщо в `CreateContainerConfigError` — немає Secret `mlflow-credentials`.
 
 ---
@@ -170,11 +164,11 @@ run_train tiny "5,500" "1,none"
 Потім те саме через API — бо UI це лише «мордочка» до нього:
 
 ```bash
-EXP=$(curl -s "http://localhost:5000/api/2.0/mlflow/experiments/get-by-name?experiment_name=iris-rf" \
+EXP=$(curl -s "http://localhost:5001/api/2.0/mlflow/experiments/get-by-name?experiment_name=iris-rf" \
       | jq -r '.experiment.experiment_id')
 echo "experiment_id=$EXP"
 
-curl -s -X POST http://localhost:5000/api/2.0/mlflow/runs/search \
+curl -s -X POST http://localhost:5001/api/2.0/mlflow/runs/search \
   -H 'Content-Type: application/json' \
   -d "{\"experiment_ids\":[\"$EXP\"],\"max_results\":50,\"order_by\":[\"metrics.f1 DESC\"]}" \
 | jq -r '.runs[] | [
@@ -359,10 +353,10 @@ kubectl -n mlflow exec sts/postgres -- \
 
 ### 4б. Evidently: багатий звіт як артефакт (слайд 35, лабораторна частина)
 
-**Evidently НЕМА в образі `mds06-mlflow-tools:v1`** — і це свідомо: +500-700 MiB
+**Evidently НЕМА в образі `mds06-mlflow-tools:v2`** — і це свідомо: +500-700 MiB
 (pyarrow, plotly, litestar, statsmodels, nltk) заради HTML, який у гарячому
-шляху не потрібен. У `train/requirements.txt` рядок `evidently==0.7.21` лежить
-закомментованим.
+шляху не потрібен. У `apps/trainer/requirements.txt` рядок `evidently==0.7.21`
+лежить закоментованим.
 
 Тому запускаємо **зі свого ноутбука** — і саме так ви на власній шкірі
 відчуєте, чому `proxiedArtifactStorage: false` вимагає доступу до MinIO.
@@ -370,7 +364,7 @@ kubectl -n mlflow exec sts/postgres -- \
 ```bash
 # ТРИ тунелі. MinIO тут ОБОВʼЯЗКОВИЙ: при proxiedArtifactStorage: false
 # артефакт вантажить КЛІЄНТ напряму в S3, а не сервер MLflow.
-kubectl -n mlflow  port-forward svc/mlflow 5000:80 &
+kubectl -n mlflow  port-forward svc/mlflow 5001:80 &
 kubectl -n mlflow  port-forward svc/minio  9000:9000 &
 kubectl -n logging port-forward svc/loki   3100:3100 &
 
@@ -378,7 +372,7 @@ python3 -m venv /tmp/ev && . /tmp/ev/bin/activate
 pip install evidently==0.7.21 mlflow==3.15.1 boto3==1.43.72 \
             scikit-learn==1.9.0 scipy==1.18.0 pandas==2.3.3
 
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
 export MLFLOW_S3_ENDPOINT_URL=http://127.0.0.1:9000
 export AWS_DEFAULT_REGION=eu-central-1
 export AWS_ACCESS_KEY_ID=$(kubectl -n mlflow get secret mlflow-credentials -o jsonpath='{.data.rootUser}' | base64 -d)
@@ -386,7 +380,7 @@ export AWS_SECRET_ACCESS_KEY=$(kubectl -n mlflow get secret mlflow-credentials -
 export LOKI_URL=http://127.0.0.1:3100        # drift_exporter читає це з env
 export DO_NOT_TRACK=1                        # iterative-telemetry «дзвонить додому»
 
-cd drift && python - <<'PY'
+cd apps/drift-exporter && python - <<'PY'
 import mlflow, pandas as pd
 from evidently import Report
 from evidently.presets import DataDriftPreset
@@ -415,10 +409,10 @@ PY
 Далі: MLflow UI → run `evidently-report` → Artifacts → `evidently.html` →
 **Download**. Порівняйте його вердикт із панеллю 7 дашборда.
 
-*Варіант для тих, кому потрібен Evidently у кластері:* розкомментувати
-`evidently==0.7.21` у `train/requirements.txt`, зібрати образ як **`:v2`**
-(не перезаписуючи `v1` — граблі №6) і запускати через `tool`. Ціна — образ
-~1.8 GiB на кожній ноді.
+*Варіант для тих, кому потрібен Evidently у кластері:* розкоментувати
+`evidently==0.7.21` у `apps/trainer/requirements.txt`, зібрати образ як
+**`:v3`** (не перезаписуючи `v2` — граблі №6) і запускати через `tool`. Ціна —
+образ ~1.8 GiB на кожній ноді.
 
 ### На що звернути увагу
 - **Забудете тунель до MinIO — отримаєте
@@ -451,7 +445,7 @@ PY
 
 ```bash
 # 0. Зафіксувати «до». Дивимось сирі метрики, а не тільки картинку.
-curl -s localhost:9100/metrics | grep -E '^drift_|^current_window|^prediction_class'
+curl -s localhost:9101/metrics | grep -E '^drift_|^current_window|^prediction_class'
 date -u +%H:%M:%S            # запишіть цей час, він потрібен на дашборді
 
 # 1. Лог експортера в окремому терміналі — раз на 60 с там зʼявляється рядок
@@ -462,7 +456,7 @@ kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0.8
 date -u +%H:%M:%S            # мить T0
 
 # 3. Спостерігати
-watch -n 20 "curl -s localhost:9100/metrics | grep -E '^drift_(detected|p_value)'"
+watch -n 20 "curl -s localhost:9101/metrics | grep -E '^drift_(detected|p_value)'"
 
 # 4. Через ~15 хв повернути норму
 kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0
@@ -643,7 +637,7 @@ kubectl -n mlflow get pods --show-labels
 kubectl -n mlflow scale statefulset/postgres --replicas=0
 kubectl -n mlflow get pods -w        # postgres-0 зникає
 
-# 1. Що робить MLflow UI? Оновіть сторінку на localhost:5000
+# 1. Що робить MLflow UI? Оновіть сторінку на localhost:5001
 # 2. Под MLflow при цьому:
 kubectl -n mlflow get pods -l app.kubernetes.io/name=mlflow    # ДИВІТЬСЯ READY
 kubectl -n mlflow logs deploy/mlflow --tail=20
@@ -803,6 +797,492 @@ kubectl -n mlflow delete pod -l app.kubernetes.io/name=mlflow
 
 ---
 
+# Тема 10. Автоматизоване тренування
+
+Вправи 9-12 працюють з пайплайном зі `docs/10-automated-training.md`:
+GitHub Actions → Step Functions → Job у EKS → MLflow → quality gate → прод.
+
+## Перед вправами 9-12
+
+Пайплайн має бути розгорнутий, а стек Тем 8-9 — живий:
+
+```bash
+make up            # якщо ще не піднято
+make pipeline-up   # 17 ресурсів: 3 Lambda, state machine, 3 ролі IAM, Access Entry
+make pipeline-run  # контрольний прогін: усі шість станів мусять бути зелені
+```
+
+Дві речі, які економлять години в цих вправах:
+
+- **`lambdas/*/handler.py` тестується без AWS.** У `terraform/training-pipeline/lambdas.tf`
+  ZIP збирається з `source_file` — тобто **однієї** `handler.py`, без залежностей.
+  Через це будь-яку логіку можна прогнати локально: `cd lambdas/evaluate && python3 test_handler.py`.
+  Прогін у хмарі коштує 2-4 хвилини, локальний — 0.2 секунди.
+- **`make pipeline-up` перезаллє Lambda автоматично.** `source_code_hash` рахується
+  з ZIP, тож правка `handler.py` → `terraform apply` бачить зміну. Кластер і стек
+  Тем 8-9 при цьому не чіпаються.
+
+Дивитись, що саме сталося в Lambda:
+
+```bash
+aws logs tail /aws/lambda/mds06-evaluate --since 10m
+aws logs tail /aws/lambda/mds06-validate --since 10m
+```
+
+---
+
+## Вправа 9. Абсолютна підлога f1 у quality gate ⭐⭐ (~30 хв)
+
+### Мета
+Побачити діру в gate, який дивиться ЛИШЕ на різницю: ланцюжок дрібних
+«покращень» може повільно зʼїхати вниз, і кожен окремий крок при цьому
+формально законний.
+
+### Що робити
+
+**Крок 1 — відтворити діру.** Спершу зробіть свідомо погану модель чемпіоном,
+а потім промоутьте трохи менш погану:
+
+```bash
+make train N=10 D=1              # PROMOTE=true за дефолтом -> @champion з f1 ~0.5-0.65
+make pipeline-run N=500 D=1      # 500 дерев глибиною 1: краще за 10, але все одно жах
+```
+
+Чинний gate скаже **ПРОМОУТ**: `delta ≥ 0.001` виконано. Прод тепер тримає
+модель, яка вгадує гірше за монетку на двох класах із трьох. Формально все
+правильно — і саме це проблема.
+
+*Якщо приріст вийшов відʼємним і ви отримали `ВІДХИЛЕНО` за дельтою — це теж
+нормально (обидві моделі однаково погані). Повторіть із `N=1000 D=1`.*
+
+**Крок 2 — додати підлогу.** Файл `lambdas/evaluate/handler.py`, поруч із
+`MIN_DELTA`:
+
+```python
+# Абсолютна межа: нижче неї модель не їде в прод НІКОЛИ, навіть якщо вона
+# краща за чинну. Дельта захищає від деградації відносно чемпіона; підлога —
+# від ланцюжка законних дрібних кроків, який сповз у прірву.
+MIN_F1 = float(os.getenv("MIN_F1", "0.9"))
+```
+
+і перевірка в `handler()` — **ДО** гілки `if champion is None`, одразу після
+рядка `champion = result.get("champion_f1")`:
+
+```python
+    # delta рахуємо навіть коли відхиляємо: саме тоді вона найцікавіша
+    # (метрика F1Delta у CloudWatch і рядок у виводі pipeline-run).
+    d = None if champion is None else round(f1 - float(champion), 6)
+
+    if f1 < MIN_F1:
+        return {"promote": False,
+                "reason": f"f1 {f1:.4f} нижче абсолютної підлоги {MIN_F1}",
+                "version": str(result["version"]), "f1": f1,
+                "champion_f1": champion, "delta": d,
+                "accuracy": float(result.get("accuracy", 0)),
+                "run_id": result.get("run_id", "")}
+```
+
+⚠️ **Два місця, де це ламається, і обидва — зміст вправи.**
+
+1. **Порядок.** Поставите підлогу після `if champion is None` — і **перша**
+   модель у порожньому реєстрі обійде її, бо та гілка робить `return` раніше.
+   Дірка лишиться рівно там, де вона найнебезпечніша: на першому запуску в
+   новому середовищі.
+2. **`"delta": None` замість `d`.** Наявний тест
+   `handler(logs(result(f1=0.88, champion_f1=0.93)))` очікує `delta < 0` і
+   впаде з `TypeError: '<' not supported between instances of 'NoneType' and
+   'int'`. Це не причіпка тесту: 0.88 нижче підлоги, тому нова гілка
+   перехоплює цей випадок — і з `None` метрика `F1Delta` у CloudWatch зникла б
+   саме тоді, коли вона найцікавіша. Спробуйте спершу з `None`, подивіться на
+   падіння, потім полагодьте.
+
+**Крок 3 — самоперевірка.** Додайте в `lambdas/evaluate/test_handler.py`:
+
+```python
+# ── краща за чинну, але нижче абсолютної підлоги -> ВІДХИЛИТИ ──
+out = handler(logs(result(f1=0.62, champion_f1=0.55)), None)
+assert out["promote"] is False, out
+assert "підлоги" in out["reason"], out
+
+# ── перша модель теж не обходить підлогу ──
+out = handler(logs(result(f1=0.85, champion_f1=None)), None)
+assert out["promote"] is False, out
+```
+
+```bash
+cd lambdas/evaluate && python3 test_handler.py
+```
+
+**Крок 4 — застосувати й перевірити наживо:**
+
+```bash
+make pipeline-up                 # перезаллє Lambda: source_code_hash змінився
+make pipeline-run N=500 D=1      # тепер ВІДХИЛЕНО
+make train                       # повернути нормального чемпіона (f1 ~0.96)
+```
+
+### Що має вийти
+Той самий прогін `N=500 D=1`, який до правки давав `✅ ПРОМОУТ`, тепер дає
+`⛔ ВІДХИЛЕНО` з причиною `f1 0.6xxx нижче абсолютної підлоги 0.9`. Виконання
+Step Functions — **SUCCEEDED**, гілка `ModelRejected`. Локально —
+`✅ quality gate: 7 перевірок пройдено` плюс ваші дві.
+
+### На що звернути увагу
+- **Дельта і підлога ловлять різні аварії.** Дельта — «нова гірша за чинну».
+  Підлога — «обидві погані». Жодна з них не замінює іншу, і саме тому в
+  дорослому gate їх завжди дві.
+- **Значення 0.9 — не істина, а рішення продукту.** На Iris нормальна модель
+  дає 0.93-1.0, тож 0.9 відсікає лише поламане. На незбалансованих реальних
+  даних 0.9 macro-f1 могло б бути недосяжним, і підлога заблокувала б усе.
+  Число має приходити від того, хто знає ціну помилки, а не з README.
+- **`os.getenv("MIN_F1", "0.9")` — навмисно.** Хочете керувати ним із
+  Terraform, як `MIN_DELTA`: додайте `variable "min_f1"` у `variables.tf` і
+  `MIN_F1 = tostring(var.min_f1)` у мапу `local.lambdas.evaluate.env`
+  (`lambdas.tf`, рядок з `MIN_DELTA`). Дефолт у коді при цьому лишається
+  страховкою: Lambda без змінної не стає беззубою.
+- Порівняйте, скільки коштувала перевірка локально (0.2 c) і в хмарі (~3 хв
+  на прогін). Це та сама теза, що й у ValidateParams, лише про тести.
+
+---
+
+## Вправа 10. Gate, який дивиться на КОЖЕН клас ⭐⭐⭐ (~50 хв, з них ~12 — збірка образу)
+
+### Мета
+Зрозуміти, чому macro-f1 — усереднення, і що воно ховає. Модель може підняти
+середню f1 і водночас повністю провалити один клас: у медицині це «навчились
+краще розпізнавати здорових, перестали бачити хворих».
+
+### 10а. Половина в gate — без збірки образу (~15 хв)
+
+Спершу навчіть gate читати поле, якого ще немає. Так ви перевірите логіку за
+секунди, а не за 12 хвилин збірки.
+
+`lambdas/evaluate/handler.py`:
+
+```python
+MIN_CLASS_F1 = float(os.getenv("MIN_CLASS_F1", "0.8"))
+```
+
+і сама перевірка в `handler()` — **одразу за підлогою з вправи 9** (`d` там
+уже пораховано):
+
+```python
+    # У логах може не бути цього поля — старий образ. Тоді перевірку
+    # ПРОПУСКАЄМО, а не валимо прогін: gate не має ламатись від того, що
+    # тренувальний образ ще не оновили.
+    per_class = result.get("f1_per_class")
+    if per_class and min(per_class.values()) < MIN_CLASS_F1:
+        worst = min(per_class, key=per_class.get)
+        return {"promote": False,
+                "reason": f"клас «{worst}»: f1 {per_class[worst]:.4f} < {MIN_CLASS_F1}",
+                "version": str(result["version"]), "f1": f1,
+                "champion_f1": champion, "delta": d,
+                "accuracy": float(result.get("accuracy", 0)),
+                "run_id": result.get("run_id", "")}
+```
+
+Тест у `test_handler.py` — функція `result()` приймає `**kw`, тож нове поле
+додається без правок обгортки:
+
+```python
+# ── середня чудова, один клас провалений -> ВІДХИЛИТИ ──
+out = handler(logs(result(f1=0.95, champion_f1=0.90,
+    f1_per_class={"setosa": 1.0, "versicolor": 0.93, "virginica": 0.41})), None)
+assert out["promote"] is False and "virginica" in out["reason"], out
+
+# ── старий образ без поля -> перевірка мовчки пропускається ──
+out = handler(logs(result(f1=0.95, champion_f1=0.90)), None)
+assert out["promote"] is True, out
+```
+
+```bash
+cd lambdas/evaluate && python3 test_handler.py
+make pipeline-up
+```
+
+### 10б. Друга половина в тренуванні (~35 хв)
+
+Тепер навчіть `train.py` це поле друкувати. `apps/trainer/train.py`, у
+`train_one()` поруч із рештою метрик:
+
+```python
+        # average=None -> масив по класах у порядку sorted(унікальні мітки)
+        per_class = f1_score(y_test, y_pred, average=None)
+        f1_per_class = {name: float(v) for name, v in zip(class_names, per_class)}
+        mlflow.log_metrics({f"f1_{k}": v for k, v in f1_per_class.items()})
+```
+
+повернути його з `train_one` (`return {..., "f1_per_class": f1_per_class}`) і
+додати в **останній** рядок `main()`:
+
+```python
+    log(event="training_result", model=MODEL_NAME, version=version,
+        run_id=best["run_id"], f1=best["f1"], accuracy=best["accuracy"],
+        f1_per_class=best["f1_per_class"],
+        champion_f1=current, promoted=PROMOTE_TO_CHAMPION)
+```
+
+Далі — новий образ. **Тег `v3`, не перезапис `v2`**: мутабельні теги —
+граблі №6, под із `IfNotPresent` спокійно піднімає старий шар з кешу ноди і ви
+годину шукаєте, чому правка не діє.
+
+```bash
+REG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com
+aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $REG
+
+# Контекст — КОРІНЬ репозиторію: Dockerfile копіює і з apps/trainer/, і з apps/drift-exporter/
+docker buildx build --platform linux/amd64 -f apps/trainer/Dockerfile \
+  -t $REG/mds06-mlflow-tools:v3 --push .        # 8-12 хв через QEMU
+
+# ручний прогін на новому образі
+TRAINER_IMAGE=$REG/mds06-mlflow-tools:v3 make train
+
+# пайплайн: `make pipeline-up` змінних не передає, тому один раз явно
+cd terraform/training-pipeline && terraform apply -var "trainer_image=$REG/mds06-mlflow-tools:v3"
+cd - && make pipeline-run N=10 D=1
+```
+
+### Що має вийти
+- У логах Job зʼявляється `"f1_per_class": {"setosa": 1.0, ...}`, у MLflow —
+  три нові метрики `f1_setosa` / `f1_versicolor` / `f1_virginica`, які видно в
+  таблиці порівняння запусків.
+- `make pipeline-run N=10 D=1` (десять дерев глибиною 1) відхиляється **з
+  іменем конкретного класу** в причині, а не просто «гірше за чинну».
+- До перезбірки образу пайплайн працює як раніше — саме тому перевірка
+  написана як «поля немає → пропускаємо».
+
+### На що звернути увагу
+- **Порядок класів у `average=None` — це `sorted(unique(y))`, а не порядок
+  появи.** Zip з `class_names` збігається лише тому, що `load_iris()` дає
+  `target` як 0/1/2 і `target_names` у тому самому порядку. На своїх даних це
+  треба перевіряти: `f1_score(..., labels=...)` існує саме для цього.
+- **Сумісність уперед — не ввічливість, а вимога.** Gate і тренувальний образ
+  оновлюються різними людьми в різний час. Перевірка, яка падає від
+  відсутнього поля, перетворює оновлення gate на скоординований реліз.
+- **Поріг 0.8 на клас проти 0.9 на macro — навмисно нижчий.** Найгірший клас
+  завжди гірший за середнє; однаковий поріг зробив би підлогу з вправи 9
+  недосяжною.
+- Порівняйте два числа з логів: `f1` (macro) і `min(f1_per_class)`. Різниця між
+  ними і є те, що ховає усереднення.
+
+---
+
+## Вправа 11. Змусити пайплайн впасти дешево ⭐ (~15 хв)
+
+### Мета
+Заміряти власним секундоміром, скільки коштує перевірка на початку і скільки —
+та сама помилка, знайдена в кінці.
+
+### Що робити
+
+**Крок 1 — три способи впасти на 200 мс:**
+
+```bash
+make pipeline-run N=сто                     # не число
+make pipeline-run N=5000                    # > MAX_ESTIMATORS = 2000
+make pipeline-run N=50,100,200 D=1,2,3,4,5  # сітка 3x5 = 15 > MAX_GRID = 12
+```
+
+Кожен дає `ParamsRejected` — і це **`Fail`**, на відміну від `ModelRejected`.
+Засічіть час від запуску до червоного стану. Потім у консолі AWS відкрийте граф
+і подивіться на `ValidateParams` → **Input/Output**: там текст вашої помилки.
+
+**Крок 2 — знайти дірку в перевірці.** `MAX_GRID = 12` рахує **кількість
+запусків**, а не роботу:
+
+```bash
+make pipeline-run N=2000,2000 D=1,2,3    # 2x3 = 6 запусків, перевірку пройдено
+```
+
+Шість запусків по 2000 дерев — це вчетверо довше за дозволені дванадцять по 50.
+Перевірка формально виконана, заняття зупинилось.
+
+**Крок 3 — закрити її.** `lambdas/validate/handler.py`:
+
+```python
+# MAX_GRID рахує запуски, а не роботу: 2 x 3 сітки по 2000 дерев проходить
+# ліміт «12 запусків» і при цьому тренується вчетверо довше за дозволений
+# максимум. Обмежуємо сумарну кількість дерев.
+MAX_TREES_TOTAL = 6000
+```
+
+і поруч із перевіркою `total > MAX_GRID`:
+
+```python
+    trees = sum(n_estimators) * len(depths)
+    if trees > MAX_TREES_TOTAL:
+        raise ValueError(
+            f"сумарно {trees} дерев (сітка {n_estimators} x {len(depths)} глибин), "
+            f"дозволено до {MAX_TREES_TOTAL}"
+        )
+```
+
+**Крок 4 — перевірити локально, без AWS.** `handler()` навмисно переживає
+`context=None` (рядок `uniq = context.aws_request_id[:8] if context is not None else "local"`):
+
+```bash
+cd lambdas/validate && python3 -c "
+from handler import handler
+print(handler({'commit_sha':'abc1234','n_estimators':'50,100,200','max_depth':'2,none'}, None))
+for bad in [{'n_estimators':'2000,2000','max_depth':'1,2,3'},   # ваша нова межа
+            {'n_estimators':'сто'}, {'n_estimators':'5000'},
+            {'n_estimators':'50,100,200','max_depth':'1,2,3,4,5'}]:
+    try:
+        handler({'commit_sha':'abc1234', **bad}, None)
+        print('❌ ПРОПУСТИЛО:', bad)
+    except ValueError as e:
+        print('✅ відхилено:', e)
+"
+```
+
+```bash
+make pipeline-up
+make pipeline-run N=2000,2000 D=1,2,3        # тепер ParamsRejected
+make pipeline-run                             # контроль: звичайна сітка проходить
+```
+
+### Що має вийти
+Усі чотири сміттєві входи дають `ParamsRejected` за ~200 мс проти ~2-4 хвилин,
+які той самий прогін жив би до падіння в поді. Звичайна сітка проходить — це
+контроль, без нього ви не знаєте, чи не заблокували все підряд.
+
+### На що звернути увагу
+- **Найдешевша перевірка йде першою** — головна теза кроку 1 і причина, чому
+  `ValidateParams` не всередині тренувального пода.
+- **`ParamsRejected` — це `Fail`, а `ModelRejected` — `Succeed`, і це не
+  непослідовність.** Сміття в параметрах = зламаний виклик, його має побачити
+  людина. Відхилена модель = пайплайн спрацював як мав. Якби обидва були
+  червоними, за два тижні команда перестала б дивитись на червоне взагалі.
+- **Межі в `validate` свідомо широкі.** Задача — відсікти сміття, а не
+  нав'язати «правильні» гіперпараметри. Занадто вузька перевірка перетворює
+  gate на перешкоду експерименту, і люди починають ходити повз пайплайн.
+- Ваша нова межа теж має дірку: 12 запусків по 500 дерев — це 6000, рівно
+  ліміт, і це все ще довго. Знайдіть її самі й вирішіть, чи варто закривати.
+  **Не кожну дірку треба латати** — інколи чесніше поставити таймаут.
+
+---
+
+## Вправа 12. Додати Map у state machine ⭐⭐⭐⭐ (~50 хв)
+
+### Мета
+Слайд 24 показує `Map` і `Wait` як штатні стани. Зробити їх своїми руками і
+наступити на те, чого зі слайда не видно: обмеження кластера і форму даних на
+виході.
+
+### 12а. Розминка: Wait (~10 хв)
+
+`terraform/training-pipeline/state_machine.asl.json`. Після `PromoteModel`
+вставте стан і перенаправте на нього:
+
+```json
+    "WaitForReload": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Comment": "POST /reload не блокуючий, а сервіс перечитує реєстр не миттєво. Без цієї паузи CloudWatch фіксує Promoted раніше, ніж прод справді віддає нову версію.",
+      "Next": "LogMetrics"
+    },
+```
+
+у `PromoteModel` замінити `"Next": "LogMetrics"` на `"Next": "WaitForReload"`.
+
+```bash
+make pipeline-up
+make pipeline-run
+```
+
+У графі виконання зʼявляється сьомий стан. Заміряйте загальний час — він виріс
+рівно на 30 секунд, і це ціна чесності метрики `Promoted`.
+
+### 12б. Map: тренувати кожну глибину окремим Job (~40 хв)
+
+Зараз одна глибина від іншої відрізняється лише рядком у сітці всередині
+одного пода. Розкладемо їх на окремі Job — щоб падіння однієї конфігурації не
+забирало решту.
+
+**Крок 1.** `lambdas/validate/handler.py` уже має готовий список `depths`.
+Віддайте його одним рядком у `return`:
+
+```python
+        "depth_list": depths,        # ["2", "none"] — ItemsPath для Map
+```
+
+**Крок 2.** У ASL обгорніть `TrainOnEKS` у `Map`:
+
+```json
+    "TrainGrids": {
+      "Type": "Map",
+      "ItemsPath": "$.params.depth_list",
+      "MaxConcurrency": 1,
+      "ItemSelector": {
+        "params.$": "$.params",
+        "depth.$": "$$.Map.Item.Value",
+        "index.$": "$$.Map.Item.Index"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "TrainOnEKS",
+        "States": { "TrainOnEKS": { ... сюди наявний стан ... } }
+      },
+      "ResultPath": "$.training",
+      "Next": "EvaluateModel"
+    },
+```
+
+Усередині `TrainOnEKS` два рядки мусять змінитись:
+
+```json
+"name.$": "States.Format('{}-{}', $.params.job_name, $.index)",
+{ "name": "GRID_MAX_DEPTH", "value.$": "$.depth" }
+```
+
+**Крок 3 — найважче, і воно не в Map.** Вихід `Map` — **масив**, а
+`PromoteOrReject` уміє дивитись лише на одне поле `$.evaluation.promote`.
+Два чесних виходи:
+
+- **лінивий:** перенести `EvaluateModel` УСЕРЕДИНУ `Map` (він і так чиста
+  функція) і промоутити лише останню ітерацію. Працює за 10 хвилин, але
+  «найкраща з трьох» перетворюється на «остання з трьох» — і це треба сказати
+  вголос, а не сховати;
+- **правильний:** четверта Lambda `pick_best` — десять рядків
+  `max(results, key=lambda r: r["f1"])`. Проводка: тека `lambdas/pick_best/`
+  з `handler.py`, один запис у мапі `local.lambdas` (`lambdas.tf`) — ZIP, роль,
+  лог-група і ARN зберуться самі, — і стан `Task` між `Map` і `PromoteOrReject`.
+
+Оберіть один, зробіть і поясніть чому.
+
+```bash
+make pipeline-up
+make pipeline-run N=100 D=2,4,none      # три ітерації Map
+```
+
+### Що має вийти
+У графі виконання `TrainGrids` розгортається в три ітерації, кожна зі своїм
+Job. `kubectl -n mlflow get jobs` під час прогону показує імена з суфіксами
+`-0`, `-1`, `-2`, і **не більше одного Running одночасно**. У MLflow — три
+окремі набори запусків.
+
+### На що звернути увагу
+- **`MaxConcurrency: 1` тут обовʼязковий, і це не обережність.** У кластері
+  34 слоти подів і нуль вільних (арифметика в `docs/09-mlflow-drift.md`). Три
+  Job одночасно = два Pending, `eks:runJob.sync` чекає на них до таймауту, а
+  виглядає це як «Step Functions завис». Приберіть цей рядок і подивіться —
+  вправа коштує 5 хвилин і запамʼятовується назавжди.
+- **`$$` — обʼєкт контексту, а не змінна стану.** `$$.Map.Item.Value` /
+  `$$.Map.Item.Index` доступні ЛИШЕ всередині `ItemProcessor`. Спроба
+  звернутись до них зовні дає `States.Runtime` без пояснення.
+- **Імена Job мусять розходитись між ітераціями.** Без суфікса `-{index}`
+  друга ітерація отримає `EKS.409 AlreadyExists`, бо перша ще не прибралась
+  (`ttlSecondsAfterFinished: 1800`).
+- **Що дає Map насправді.** Не швидкість (`MaxConcurrency: 1`), а **ізоляцію**:
+  впала одна конфігурація — решта дотренувались, і в реєстрі є що порівнювати.
+  У сітці всередині одного пода падіння на третій конфігурації забирає всі шість.
+- `Wait` з 12а дорожчий, ніж здається: Standard Workflow тарифікується за
+  переходи станів, а не за час, тож 30 секунд очікування безкоштовні. А от у
+  Express Workflow тарифікується тривалість — і той самий `Wait` став би
+  рядком у рахунку.
+
+---
+
 ## Що здавати
 
 | Вправа | Артефакт |
@@ -814,6 +1294,10 @@ kubectl -n mlflow delete pod -l app.kubernetes.io/name=mlflow
 | 6 | чотири власні вирази PromQL + скріншот порожнього результату там, де його не має бути |
 | 7 | два запити LogQL і зіставлення часу: коли стрибнув Loki, коли впав p-value |
 | 8 | для кожної з чотирьох поломок: що зламалось, що при цьому **брехало**, як полагодили |
+| 9 | вивід `make pipeline-run N=500 D=1` до і після правки gate + диф `handler.py` і `test_handler.py` |
+| 10 | рядок `training_result` з `f1_per_class` і причина відхилення з іменем класу; один абзац: що саме ховало усереднення |
+| 11 | час до `ParamsRejected` за секундоміром і вивід локальної перевірки з кроку 4 |
+| 12 | скріншот графа з розгорнутим `Map` + `kubectl -n mlflow get jobs` під час прогону + один абзац: який із двох виходів кроку 3 обрали і чому |
 
 ---
 
@@ -825,8 +1309,20 @@ kubectl -n mlflow delete pod gp2-dead --ignore-not-found --force
 kubectl -n mlflow delete pvc gp2-dead --ignore-not-found
 kubectl -n ml-demo set env deploy/load-generator DRIFT_SHIFT=0
 kubectl -n ml-demo scale deploy/load-generator --replicas=0       # щоб не гнати трафік цілодобово
-pkill -f "kubectl port-forward"
+make clean                                                        # зупинити всі тунелі
 ```
+
+Після вправ 9-12 — повернути пайплайн і чемпіона в робочий стан:
+
+```bash
+git checkout lambdas/ terraform/training-pipeline/state_machine.asl.json
+make pipeline-up          # відкотити Lambda і state machine до версії з репозиторію
+make train                # нормальний @champion замість підсадженого у вправі 9
+make pipeline-down        # якщо пайплайн більше не потрібен: Lambda, SFN, ролі, Access Entry
+```
+
+`make pipeline-down` нічого не зберігає — увесь стан у MLflow. Кластер і стек
+Тем 8-9 він не чіпає.
 
 **Забутий PVC — це рахунок.** 8 GiB gp3 тихо тягне $0.76/міс. Перед
 `terraform destroy` обовʼязково: `kubectl delete pvc --all -A`, потім

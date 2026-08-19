@@ -5,4 +5,4 @@ kind: Namespace
 metadata:
   name: ml-demo
   labels:
-    app.kubernetes.io/part-of: mds06-ml-monitoring
+    app.kubernetes.io/part-of: mds06-mlops-platform
