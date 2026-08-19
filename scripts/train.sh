@@ -34,30 +34,31 @@ envsubst < "$HERE/k8s/trainer/job.yaml" | kubectl apply -f - >/dev/null || exit 
 echo "── чекаю ──"
 for i in $(seq 1 60); do
   sleep 5
-  s=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.succeeded}' 2>/dev/null)
-  f=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.failed}'    2>/dev/null)
-  [[ "$s" == "1" ]] && { echo "   ✅ завершено за ~$((i*5))с"; break; }
-  [[ "$f" != "" && "$f" != "0" ]] && {
-    echo "   ❌ впало:"; kubectl logs -n mlflow -l job-name="$JOB_NAME" --tail=20; exit 1; }
-  [[ $i -eq 60 ]] && { echo "   ⚠️  5 хв без результату"; exit 1; }
+  ok=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.succeeded}' 2>/dev/null)
+  bad=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.failed}' 2>/dev/null)
+  if [[ "$ok" == "1" ]]; then
+    echo "   ✅ завершено за ~$((i*5))с"
+    break
+  fi
+  if [[ -n "$bad" && "$bad" != "0" ]]; then
+    echo "   ❌ впало:"
+    kubectl logs -n mlflow -l job-name="$JOB_NAME" --tail=20
+    exit 1
+  fi
+  if [[ $i -eq 60 ]]; then
+    echo "   ⚠️  5 хв без результату; логи:"
+    kubectl logs -n mlflow -l job-name="$JOB_NAME" --tail=20
+    exit 1
+  fi
 done
 
 echo
+# Підсумок друкує окремий скрипт, а не python3 -c: у рядку всередині лапок
+# bash вкладені лапки доводиться екранувати, і саме на цьому попередня версія
+# падала з SyntaxError ПІСЛЯ успішного тренування — модель у реєстрі, а
+# студент бачить трейсбек.
 kubectl logs -n mlflow -l job-name="$JOB_NAME" 2>/dev/null \
-  | grep -E '"event": "(run_finished|best_run|registered)"' \
-  | python3 -c '
-import sys, json
-for line in sys.stdin:
-    d = json.loads(line)
-    if d["event"] == "run_finished":
-        p = d["params"]
-        print(f"   n={p[\"n_estimators\"]:>4} depth={str(p[\"max_depth\"]):>5}  "
-              f"accuracy={d[\"accuracy\"]:.4f}  f1={d[\"f1\"]:.4f}")
-    elif d["event"] == "best_run":
-        print(f"   ⭐ найкращий: f1={d[\"f1\"]:.4f}")
-    elif d["event"] == "registered":
-        alias = d.get("alias") or "без аліаса (рішення за quality gate)"
-        print(f"   📦 у реєстрі: {d[\"model\"]} v{d[\"version\"]} — {alias}")
-'
+  | python3 "$HERE/scripts/_summary.py"
+
 echo
-echo "   MLflow: http://localhost:5001/#/experiments?workflowType=machine_learning"
+echo "   MLflow: http://localhost:5001/#/models/iris-rf"

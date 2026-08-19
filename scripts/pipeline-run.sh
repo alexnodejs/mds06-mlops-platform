@@ -56,15 +56,7 @@ while true; do
     SUCCEEDED)
       echo
       aws stepfunctions describe-execution --execution-arn "$EXEC" --query output --output text \
-        | python3 -c "
-import json,sys
-d = json.load(sys.stdin)
-s = d.get('summary', {})
-e = d.get('evaluation', {})
-mark = '✅' if s.get('status') == 'ПРОМОУТ' else '⛔'
-print(f\"   {mark} {s.get('status')}  —  {e.get('reason','')}\")
-print(f\"      версія моделі: {s.get('model_version')}   f1: {s.get('f1')}\")
-"
+        | python3 "$HERE/scripts/_pipeline_summary.py"
       echo
       echo "   MLflow:  http://localhost:5001/#/models/iris-rf"
       echo "   Модель:  http://localhost:8000"
