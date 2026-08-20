@@ -47,10 +47,13 @@ while true; do
   case "$STATUS" in
     RUNNING|PENDING_REDRIVE)
       # Показуємо, на якому кроці зараз, — інакше 2 хвилини тиші виглядають як зависання.
+      # --output text віддає ВСІ збіги в один рядок через табуляцію, а
+      # --reverse-order ставить найновіший першим. Тому беремо перше ПОЛЕ,
+      # а не перший РЯДОК: head -1 тут не робить нічого, бо рядок один.
       STEP=$(aws stepfunctions get-execution-history --execution-arn "$EXEC" \
               --reverse-order --max-items 20 --query \
               'events[?type==`TaskStateEntered` || type==`ChoiceStateEntered`].stateEnteredEventDetails.name' \
-              --output text 2>/dev/null | head -1)
+              --output text 2>/dev/null | awk '{print $1; exit}')
       [[ "$STEP" != "$PREV" && -n "$STEP" ]] && { echo "   ▸ $STEP"; PREV="$STEP"; }
       sleep 5 ;;
     SUCCEEDED)
