@@ -86,7 +86,7 @@ jobs:
             --arg sha    "${{ github.sha }}" \
             --arg ref    "${{ github.ref_name }}" \
             --arg url    "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --arg n      "${{ inputs.n_estimators || '5,10,20' }}" \
+            --arg n      "${{ inputs.n_estimators || '40,90,180' }}" \
             --arg d      "${{ inputs.max_depth   || '2,none' }}" \
             --arg exp    "${{ inputs.experiment  || 'iris-rf' }}" \
             '{commit_sha:$sha, ref:$ref, run_url:$url,
