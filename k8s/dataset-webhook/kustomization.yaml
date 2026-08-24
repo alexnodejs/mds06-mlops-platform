@@ -1,6 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: mlflow
+
+# ⚠️ namespace.yaml тут НЕМАЄ навмисно. Namespace mlflow оголошує застосунок
+# drift-exporter, і другий власник того самого обʼєкта робить цей Application
+# вічно OutOfSync: ArgoCD бачить ресурс, яким керує хтось інший.
+# Сам namespace усе одно зʼявиться — у Application стоїть CreateNamespace=true.
 resources:
-  - namespace.yaml
   - receiver.yaml

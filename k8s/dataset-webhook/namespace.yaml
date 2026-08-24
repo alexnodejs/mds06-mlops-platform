@@ -1,8 +1,0 @@
-# Приймач живе поруч зі сховищем, у namespace mlflow: він потрібен лише MinIO,
-# і тримати його окремо означало б ще один namespace без жодної користі.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: mlflow
-  labels:
-    app.kubernetes.io/part-of: mds06-mlops-platform
