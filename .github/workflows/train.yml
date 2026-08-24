@@ -29,6 +29,13 @@ on:
       - 'terraform/training-pipeline/**'
       - '.github/workflows/train.yml'
 
+  # ⭐ Тема 11: подія «дані змінились».
+  # Її надсилає приймач у кластері, коли MinIO повідомляє про новий файл у
+  # бакеті datasets. Тобто заливка CSV запускає той самий пайплайн, що й пуш —
+  # це і є «тригер при оновленні даних» зі слайда 22.
+  repository_dispatch:
+    types: [dataset-changed]
+
   # Ручний запуск із UI GitHub — саме ним зручно показувати на занятті:
   # можна підставити свідомо гірші гіперпараметри і побачити, як quality gate
   # ВІДХИЛЯЄ модель, а прод лишається на старій версії.
@@ -92,7 +99,7 @@ jobs:
             --arg n      "${{ inputs.n_estimators || '40,90,180' }}" \
             --arg d      "${{ inputs.max_depth   || '2,none' }}" \
             --arg exp    "${{ inputs.experiment  || 'iris-rf' }}" \
-            --arg ds     "${{ inputs.dataset     || 'v2' }}" \
+            --arg ds     "${{ github.event.client_payload.dataset || inputs.dataset || 'v2' }}" \
             '{commit_sha:$sha, ref:$ref, run_url:$url,
               n_estimators:$n, max_depth:$d, experiment:$exp, dataset:$ds}')
           echo "вхід: $INPUT"

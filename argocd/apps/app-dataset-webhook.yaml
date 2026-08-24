@@ -1,0 +1,36 @@
+# Приймач подій сховища (Тема 11).
+#
+# ⚠️ ХВИЛЯ -1, тобто РАНІШЕ за MinIO (хвиля 0). MinIO перевіряє доступність цілі
+# сповіщень при старті: якщо ендпоінт не відповідає, ціль позначається
+# офлайновою, і подія про заливку файла нікуди не піде — мовчки. Приймач мусить
+# уже слухати, коли MinIO піднімається.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dataset-webhook
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
+    targetRevision: HEAD
+    path: k8s/dataset-webhook
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

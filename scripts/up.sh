@@ -91,6 +91,20 @@ for i in $(seq 1 60); do
 done
 
 echo
+echo "══ 3.5. Секрет приймача подій (Тема 11) ══"
+# WEBHOOK_TOKEN мусить збігатися з MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_DATASETS
+# в argocd/apps/app-minio.yaml. GITHUB_TOKEN — необовʼязковий: без нього
+# приймач працює в режимі would_trigger і лише пише в лог, що зробив би.
+# Створити токен: gh auth token   (потрібен доступ repo)
+kubectl create secret generic dataset-webhook -n mlflow \
+  --from-literal=WEBHOOK_TOKEN=mds06-webhook \
+  --from-literal=GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+[[ -n "${GITHUB_TOKEN:-}" ]] \
+  && echo "  ✅ токен GitHub заданий — подія в сховищі запускатиме пайплайн" \
+  || echo "  ⚠️  GITHUB_TOKEN не заданий: приймач лише логуватиме подію (would_trigger)"
+
+echo
 echo "══ 4. Датасети в MinIO (Тема 11) ══"
 # Бакет живе на PVC, а PVC гине разом зі стеком — тому сейдинг на КОЖНОМУ
 # підйомі, а не один раз. Генератор детермінований, повтор нічого не ламає.

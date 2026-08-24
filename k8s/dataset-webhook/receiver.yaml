@@ -1,0 +1,205 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  ПРИЙМАЧ ПОДІЙ СХОВИЩА — «нові дані → тренування» (Тема 11, слайд 22).
+#
+#  Ланцюг цілком:
+#     mc cp new.csv  ──►  MinIO (notify_webhook)
+#                            │ POST з подією s3:ObjectCreated:Put
+#                            ▼
+#                     ЦЕЙ ПРИЙМАЧ
+#                            │ POST /repos/.../dispatches
+#                            ▼
+#                     GitHub Actions ──OIDC──► Step Functions ──► Job у EKS
+#
+#  Це та сама схема, що на слайді 8 Теми 10 («тригер події»), лише замість
+#  S3+EventBridge — MinIO+webhook, бо дані в нас у кластері.
+#
+#  ЧОМУ ЧЕРЕЗ GITHUB, А НЕ НАПРЯМУ В STEP FUNCTIONS: прямий виклик вимагав би
+#  справжніх креденшелів AWS усередині кластера (Pod Identity, окрема роль,
+#  ~55 рядків Terraform). Через GitHub достатньо токена в секреті — і ми
+#  безкоштовно отримуємо журнал запусків, ручний повтор і той самий шлях,
+#  яким ходить звичайний пуш.
+#
+#  ⚠️ ПОДІЇ ГУБЛЯТЬСЯ. Якщо приймач лежить у момент заливки файла — тренування
+#  не запуститься, і ніхто про це не дізнається. Це принципова властивість
+#  подієвої схеми, а не недоробка. Надійна альтернатива — періодична ЗВІРКА
+#  стану (CronJob, який порівнює digest у сховищі з тегом чинної моделі):
+#  події губляться, звірка — ні. Обговорити на занятті.
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dataset-webhook-script
+  namespace: mlflow
+data:
+  receiver.py: |
+    """Приймає подію MinIO і смикає GitHub repository_dispatch.
+
+    Лише стандартна бібліотека: http.server + urllib. Жодних залежностей, тож
+    працює в будь-якому образі з Python — ми беремо той, що вже витягнутий на
+    ноду для сервісу моделі.
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = int(os.getenv("PORT", "8080"))
+    # Токен, яким MinIO підписує запит. Порожній = не перевіряти (для локального
+    # прогону); у кластері він приходить із секрету, який створює `make up`.
+    TOKEN = os.getenv("WEBHOOK_TOKEN", "")
+    GH_TOKEN = os.getenv("GITHUB_TOKEN", "")
+    GH_REPO = os.getenv("GITHUB_REPO", "alexnodejs/mds06-mlops-platform")
+    # Яку версію датасету тренувати у відповідь. Подія несе імʼя файла, але
+    # пайплайн приймає коротку назву версії — витягуємо її з ключа.
+    EVENT_TYPE = os.getenv("EVENT_TYPE", "dataset-changed")
+
+    def log(**f):
+        print(json.dumps(f, ensure_ascii=False, default=str), flush=True)
+
+    def dataset_from_key(key):
+        """datasets/iris/v3.csv -> v3. Невідоме імʼя -> None, подію ігноруємо."""
+        name = key.rsplit("/", 1)[-1]
+        stem = name[:-4] if name.endswith(".csv") else name
+        return stem if stem.startswith("v") and stem[1:].isdigit() else None
+
+    def trigger(dataset, key):
+        if not GH_TOKEN:
+            # Без токена приймач лишається робочим і ГУЧНО каже, що зробив би.
+            # Так демонстрація «подія доїхала» працює навіть без налаштування
+            # GitHub — а без цієї гілки студент бачив би тишу і не знав чому.
+            log(event="would_trigger", dataset=dataset, key=key,
+                hint="GITHUB_TOKEN не заданий; див. docs/11 «Тригер за подією»")
+            return
+        body = json.dumps({"event_type": EVENT_TYPE,
+                           "client_payload": {"dataset": dataset, "key": key}}).encode()
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GH_REPO}/dispatches",
+            data=body, method="POST",
+            headers={"Authorization": f"Bearer {GH_TOKEN}",
+                     "Accept": "application/vnd.github+json",
+                     "Content-Type": "application/json",
+                     "User-Agent": "mds06-dataset-webhook"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                log(event="triggered", dataset=dataset, status=r.status)
+        except urllib.error.HTTPError as e:
+            log(event="trigger_failed", status=e.code, body=e.read(300).decode("utf-8", "replace"))
+        except Exception as e:
+            log(event="trigger_failed", error=str(e))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if TOKEN and self.headers.get("Authorization", "").split()[-1:] != [TOKEN]:
+                self.send_response(401); self.end_headers(); return
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+            try:
+                payload = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                log(event="bad_payload"); return
+            for rec in payload.get("Records", []):
+                key = urllib.parse.unquote(rec.get("s3", {}).get("object", {}).get("key", ""))
+                ds = dataset_from_key(key)
+                log(event="received", key=key, dataset=ds, name=rec.get("eventName"))
+                if ds:
+                    trigger(ds, key)
+
+        def do_GET(self):
+            # /healthz для проб. MinIO перевіряє доступність цілі при старті,
+            # тож приймач мусить відповідати РАНІШЕ за MinIO — див. sync-wave.
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+
+        def log_message(self, *a):
+            pass  # свій JSON-лог замість шумного стандартного
+
+    if __name__ == "__main__":
+        log(event="listening", port=PORT, repo=GH_REPO,
+            github_token="є" if GH_TOKEN else "НЕМАЄ (режим would_trigger)")
+        HTTPServer(("", PORT), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataset-webhook
+  namespace: mlflow
+  labels:
+    app: dataset-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataset-webhook
+  template:
+    metadata:
+      labels:
+        app: dataset-webhook
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: receiver
+          # Образ сервісу моделі: у ньому вже є Python, і він уже витягнутий на
+          # ноду. Свій образ заради 60 рядків stdlib — зайва збірка й зайвий pull.
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v6
+          command: ["python", "/scripts/receiver.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # WEBHOOK_TOKEN і GITHUB_TOKEN. optional: true — без секрету под
+            # піднімається і працює в режимі would_trigger.
+            - secretRef:
+                name: dataset-webhook
+                optional: true
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: GITHUB_REPO
+              value: alexnodejs/mds06-mlops-platform
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            # Один потік stdlib-сервера, який прокидається кілька разів на добу.
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: dataset-webhook-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dataset-webhook
+  namespace: mlflow
+  labels:
+    app: dataset-webhook
+spec:
+  type: ClusterIP
+  selector:
+    app: dataset-webhook
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

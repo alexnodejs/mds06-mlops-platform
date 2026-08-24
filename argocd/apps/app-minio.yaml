@@ -105,6 +105,26 @@ spec:
             policy: none
             purge: false # ⚠️ тут ДАНІ, а не похідне від них — не чистити ніколи
 
+        # ⭐ Тема 11: сповіщення про зміну даних.
+        # MinIO шле POST у приймач, той смикає GitHub, GitHub — пайплайн.
+        # Це та сама роль, що в S3 виконує EventBridge (слайд 8 Теми 10).
+        #
+        # ⚠️ Токен тут НЕ секретний навмисно: приймач слухає лише всередині
+        # кластера (ClusterIP), а токен захищає від випадкового запиту, не від
+        # зловмисника. Справжній секрет у Git не кладуть — якщо ендпоінт колись
+        # стане зовнішнім, переносьте це в extraSecret (ключ config.env).
+        environment:
+          MINIO_NOTIFY_WEBHOOK_ENABLE_DATASETS: "on"
+          MINIO_NOTIFY_WEBHOOK_ENDPOINT_DATASETS: "http://dataset-webhook.mlflow.svc.cluster.local:8080/"
+          MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_DATASETS: "mds06-webhook"
+
+        # Правило: які саме події слати. Виконує post-install Job чарта тим
+        # самим mc, що створює бакети.
+        # ⚠️ ARN обовʼязково великими літерами в ідентифікаторі — він мусить
+        # збігатися з суфіксом змінних MINIO_NOTIFY_WEBHOOK_*_DATASETS.
+        customCommands:
+          - command: "event add myminio/datasets arn:minio:sqs::DATASETS:webhook --event put --suffix .csv"
+
         # 128Mi для транзієнтного пода з mc — дефолт чарта, лишаємо.
         # Живе ~10 секунд і зникає, але слот пода йому потрібен реальний.
         makeBucketJob:
