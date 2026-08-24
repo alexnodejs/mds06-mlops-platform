@@ -52,7 +52,7 @@ curl -s localhost:8000/metrics | grep predict_
 
 ```bash
 make images        # login у ECR + збірка mds06-ml-model:v6,
-                   # mds06-mlflow-tools:v3, mds06-react-gitops:v2
+                   # mds06-mlflow-tools:v4, mds06-react-gitops:v2
 ```
 
 Усередині (`scripts/build-images.sh`) для цього сервісу виконується:

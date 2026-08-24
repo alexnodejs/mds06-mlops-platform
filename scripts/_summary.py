@@ -27,6 +27,14 @@ for line in sys.stdin:
     elif ev == "registered":
         alias = d.get("alias") or "без аліаса (рішення за quality gate, Тема 10)"
         print("   📦 у реєстрі: {} v{} — {}".format(d["model"], d["version"], alias))
+    elif ev == "uploaded":
+        print("   {:<34} {:>5} рядків  sha {}".format(d["uri"], d["rows"], d["digest"]))
+    elif ev == "bucket_created":
+        print("   + створено бакет {}".format(d["bucket"]))
+    elif ev == "dataset_loaded":
+        print("   📂 дані: {} — {} рядків, digest {}".format(d["uri"], d["rows"], d["digest"]))
+    elif ev == "dataset_unavailable":
+        print("   ⚠️  сховище недоступне ({}) — падаю на load_iris()".format(d["uri"]))
     elif ev == "training_result":
         champ = d.get("champion_f1")
         print("   📊 попередній чемпіон: {}".format(

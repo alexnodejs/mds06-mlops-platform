@@ -1,8 +1,9 @@
 # Вправи: MLflow, дріфт і автоматизоване тренування
 
-**Теми 9 і 10.** Вправи 1-8 — MLflow, Model Registry, виявлення дріфту
+**Теми 9, 10 і 11.** Вправи 1-8 — MLflow, Model Registry, виявлення дріфту
 (`docs/09-mlflow-drift.md`). Вправи 9-12 — пайплайн Step Functions
-(`docs/10-automated-training.md`).
+(`docs/10-automated-training.md`). Вправи 13-16 — управління моделями:
+метадані, дані, blue-green (`docs/11-model-registry.md`).
 
 Дванадцять вправ за зростанням складності. Усе виконується на живому стеку —
 жодних вигаданих сервісів, усі імена реальні.
@@ -40,7 +41,7 @@ kubectl -n ml-demo scale deploy/load-generator --replicas=1   # або make load
 
 ```bash
 # Реєстр беремо з ваших креденшелів, а не зашиваємо чужий номер акаунта.
-IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3
+IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v4
 
 tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
   kubectl -n mlflow run "$1" --rm -i --restart=Never --image="$IMG" \
@@ -146,7 +147,7 @@ PROMOTE=false make train         # зареєструвати версію, ал
 - Якщо Job у `ImagePullBackOff`: приватний ECR працює без `imagePullSecret`
   лише тому, що на node role висить `AmazonEC2ContainerRegistryReadOnly`.
   Перевірте, що тег у ECR збігається з тим, що підставив `train.sh`
-  (`mds06-mlflow-tools:v3`) — зібрати: `make images`.
+  (`mds06-mlflow-tools:v4`) — зібрати: `make images`.
   Якщо в `CreateContainerConfigError` — немає Secret `mlflow-credentials`.
 
 ---
@@ -353,7 +354,7 @@ kubectl -n mlflow exec sts/postgres -- \
 
 ### 4б. Evidently: багатий звіт як артефакт (слайд 35, лабораторна частина)
 
-**Evidently НЕМА в образі `mds06-mlflow-tools:v3`** — і це свідомо: +500-700 MiB
+**Evidently НЕМА в образі `mds06-mlflow-tools:v4`** — і це свідомо: +500-700 MiB
 (pyarrow, plotly, litestar, statsmodels, nltk) заради HTML, який у гарячому
 шляху не потрібен. У `apps/trainer/requirements.txt` рядок `evidently==0.7.21`
 лежить закоментованим.
@@ -1032,13 +1033,13 @@ aws ecr get-login-password --region eu-central-1 | docker login --username AWS -
 
 # Контекст — КОРІНЬ репозиторію: Dockerfile копіює і з apps/trainer/, і з apps/drift-exporter/
 docker buildx build --platform linux/amd64 -f apps/trainer/Dockerfile \
-  -t $REG/mds06-mlflow-tools:v3 --push .        # 8-12 хв через QEMU
+  -t $REG/mds06-mlflow-tools:v4 --push .        # 8-12 хв через QEMU
 
 # ручний прогін на новому образі
-TRAINER_IMAGE=$REG/mds06-mlflow-tools:v3 make train
+TRAINER_IMAGE=$REG/mds06-mlflow-tools:v4 make train
 
 # пайплайн: `make pipeline-up` змінних не передає, тому один раз явно
-cd terraform/training-pipeline && terraform apply -var "trainer_image=$REG/mds06-mlflow-tools:v3"
+cd terraform/training-pipeline && terraform apply -var "trainer_image=$REG/mds06-mlflow-tools:v4"
 cd - && make pipeline-run N=10 D=1
 ```
 
@@ -1283,6 +1284,173 @@ Job. `kubectl -n mlflow get jobs` під час прогону показує і
 
 ---
 
+---
+
+## Перед вправами 13-16
+
+Стек Теми 11 має бути піднятий, а датасети — у сховищі:
+
+```bash
+make up          # засіє датасети сам
+make seed        # або окремо, якщо стек уже стоїть
+make bluegreen   # хто де і яка модель у якому варіанті
+```
+
+Три речі, які економлять час саме в цих вправах:
+
+- **Теги версії читаються без UI.** `curl -s "localhost:5001/api/2.0/mlflow/model-versions/get?name=iris-rf&version=1" | python3 -m json.tool` — швидше, ніж клікати, і результат можна покласти у звіт.
+- **Датасет можна прочитати з ноутбука**, якщо підняти другий тунель: `kubectl port-forward -n mlflow svc/minio 9000:9000`. ⚠️ `make ports` піднімає лише консоль на 9001 — це різні порти, і саме на цьому найчастіше застрягають.
+- **Кандидата створює `PROMOTE=false`.** `make train N=10 D=1 PROMOTE=false` вішає `@challenger` на свідомо гіршу модель — саме те, що потрібно, щоб у blue-green було ЩО порівнювати. Без цього обидва варіанти показують те саме.
+
+---
+
+## Вправа 13. Довести, що модель у проді навчена на тих даних, які ви думаєте ⭐⭐ (~25 хв)
+
+### Мета
+Пройти ланцюг «модель → версія → теги → файл у сховищі → хеш» до кінця і
+переконатись, що він не рветься. Це і є питання слайда 7 «на яких даних».
+
+### Що робити
+```bash
+# 1. Яка версія зараз обслуговує
+curl -s localhost:8000/healthz | python3 -m json.tool
+
+# 2. Її теги: dataset і dataset_digest
+curl -s "localhost:5001/api/2.0/mlflow/model-versions/get?name=iris-rf&version=<N>" \
+  | python3 -c 'import json,sys; [print(t["key"],"=",t["value"]) for t in json.load(sys.stdin)["model_version"]["tags"]]'
+
+# 3. Порахувати хеш файла В СХОВИЩІ й звірити з тегом
+kubectl port-forward -n mlflow svc/minio 9000:9000 &
+python3 - <<'EOF'
+import boto3, hashlib
+s3 = boto3.client("s3", endpoint_url="http://localhost:9000",
+                  aws_access_key_id="minioadmin",
+                  aws_secret_access_key="<пароль із make ports>")
+body = s3.get_object(Bucket="datasets", Key="iris/v2.csv")["Body"].read()
+print("рядків:", body.count(b"\n") - 1)
+print("sha256:", hashlib.sha256(body).hexdigest()[:12])
+EOF
+
+# 4. А тепер зламайте ланцюг: перезалийте датасет зі зміненим вмістом
+#    (додайте один рядок) і повторіть крок 3. Тег версії лишиться СТАРИМ.
+```
+
+### Що має вийти
+Хеш із кроку 3 збігається з тегом `dataset_digest`. Після кроку 4 — **не
+збігається**, хоча шлях `s3://datasets/iris/v2.csv` той самий.
+
+### На що звернути увагу
+Саме тому в тегах лежить хеш, а не лише шлях. Шлях каже «файл звався так»,
+хеш — «файл був такий». Розбіжність після кроку 4 означає: модель у проді
+навчена на даних, яких у сховищі вже немає. У проді це привід зупинити реліз.
+
+---
+
+## Вправа 14. Показати, що quality gate раніше судив шум ⭐⭐⭐ (~30 хв)
+
+### Мета
+Виміряти, чому Тема 11 замінила 150 рядків на 1500 — і побачити межу
+роздільної здатності метрики власними числами.
+
+### Що робити
+```bash
+# 1. Тренування на v1 (150 рядків) із кількома різними сітками
+for n in 10 50 200; do make train N=$n D=none EXPERIMENT=res-v1 DATASET=v1 PROMOTE=false; done
+
+# 2. Те саме на v2 (1500 рядків)
+for n in 10 50 200; do make train N=$n D=none EXPERIMENT=res-v2 DATASET=v2 PROMOTE=false; done
+
+# 3. Порівняти РОЗКИД f1 усередині кожного експерименту в MLflow UI
+#    (Experiments -> res-v1 / res-v2, сортування за f1)
+
+# 4. Порахувати, скільки різних значень f1 узагалі можливо:
+#    v1: тест = 150*0.2 = 30 рядків  -> крок 1/30
+#    v2: тест = 1500*0.2 = 300       -> крок 1/300
+```
+
+### Що має вийти
+У `res-v1` значення f1 «злипаються» у 3-4 дискретні рівні. У `res-v2` вони
+розподілені майже неперервно.
+
+### На що звернути увагу
+`MIN_DELTA = 0.001` у quality gate. Порівняйте його з кроком 1/30 ≈ 0.033: поріг
+у 33 рази менший за мінімальну можливу різницю. Тобто gate спрацьовував на
+будь-яку зміну — тобто не спрацьовував як фільтр узагалі. Скільки має бути
+`MIN_DELTA` для v2? Обґрунтуйте числом.
+
+---
+
+## Вправа 15. Blue-green: перемкнути, зламати, відкотити ⭐⭐⭐ (~35 хв)
+
+### Мета
+Побачити різницю між «відкотити трафік» і «відкотити модель» — це дві різні
+операції, і плутають їх постійно.
+
+### Що робити
+```bash
+# 1. Кандидат — свідомо гірший
+make train N=10 D=1 PROMOTE=false
+make bluegreen-up
+make bluegreen                       # у green має бути ІНША version
+
+# 2. Порівняти в Grafana, панель «Blue vs Green» (~2 хв на дані)
+
+# 3. Перемкнути НЕПРАВИЛЬНО і засікти, за скільки відкотиться
+time kubectl -n ml-demo patch svc ml-model -p '{"spec":{"selector":{"variant":"green"}}}'
+kubectl -n ml-demo get svc ml-model -o jsonpath='{.spec.selector}{"\n"}' -w
+
+# 4. Перемкнути правильно: k8s/model-api/service.yaml, blue -> green, коміт, push
+#    ⚠️ і ОБОВʼЯЗКОВО make ports заново
+
+# 5. Тепер зламайте: у green свідомо гірша модель, а трафік уже на ній.
+#    Відкотіть ДВОМА різними способами і поясніть різницю:
+git revert HEAD && git push     # спосіб А
+make rollback                   # спосіб Б
+```
+
+### Що має вийти
+Крок 3 — відкат за кілька секунд. Крок 5А повертає трафік на blue (модель green
+лишається гіршою). Крок 5Б лишає трафік на green, але міняє модель під ним.
+
+### На що звернути увагу
+Який зі способів правильний, якщо проблема в **моделі**? А якщо в **новій версії
+образу сервісу**? Blue-green керує тим, який под відповідає; реєстр — тим, яку
+модель цей под завантажив. Це різні осі, і відкат по не тій осі проблему не
+лікує.
+
+---
+
+## Вправа 16. Закрити дірку в доступі ⭐⭐⭐⭐ (~45 хв)
+
+### Мета
+Слайд 22 говорить про ролі й права. У нашому стеку їх немає: будь-хто з тунелем
+може перевісити `@champion`. Показати це і запропонувати рішення.
+
+### Що робити
+```bash
+# 1. Довести проблему: перевісити champion БЕЗ жодного пайплайну й перевірки
+curl -X POST localhost:5001/api/2.0/mlflow/registered-models/alias \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"iris-rf","alias":"champion","version":"1"}'
+curl -s localhost:8000/healthz    # за ≤30 с прод змінився
+
+# 2. Знайти, ХТО це зробив. Спробуйте. (Підказка: ніяк.)
+
+# 3. Запропонувати рішення. Мінімум два з трьох:
+#    а) тег approved_by, який ставить лише promote.py, + перевірка в app.py
+#    б) MLflow за автентифікацією (basic auth у чарті) і креденшели лише в CI
+#    в) окремий аліас @approved, який має право ставити тільки роль Step Functions
+```
+
+### Що має вийти
+Робочий варіант (а) як мінімум: `app.py` відмовляється завантажувати версію без
+тега `approved_by` і лишається на попередній, з гучним логом.
+
+### На що звернути увагу
+Чому варіант (а) — це НЕ безпека, а лише гігієна? Хто завадить поставити тег
+руками тим самим curl-ом? Справжня межа проходить там, де відбирається право
+писати в реєстр, а не там, де додається перевірка на боці читача.
+
 ## Що здавати
 
 | Вправа | Артефакт |
@@ -1298,6 +1466,10 @@ Job. `kubectl -n mlflow get jobs` під час прогону показує і
 | 10 | рядок `training_result` з `f1_per_class` і причина відхилення з іменем класу; один абзац: що саме ховало усереднення |
 | 11 | час до `ParamsRejected` за секундоміром і вивід локальної перевірки з кроку 4 |
 | 12 | скріншот графа з розгорнутим `Map` + `kubectl -n mlflow get jobs` під час прогону + один абзац: який із двох виходів кроку 3 обрали і чому |
+| 13 | хеш файла й тег `dataset_digest` поруч — до і після перезаливки датасету |
+| 14 | таблиця значень f1 для v1 і v2 + обґрунтоване число `MIN_DELTA` для v2 |
+| 15 | час відкоту selfHeal за секундоміром + один абзац: чим `git revert` відрізняється від `make rollback` |
+| 16 | вивід кроку 1 (прод змінено без пайплайну) + робочий варіант (а) + абзац, чому це не безпека |
 
 ---
 

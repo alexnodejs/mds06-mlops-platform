@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export JOB_NAME="seed-$(date +%H%M%S)"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v4}"
 
 kubectl get ns mlflow >/dev/null 2>&1 || { echo "❌ немає namespace mlflow — спершу make up"; exit 1; }
 kubectl -n mlflow get secret mlflow-credentials >/dev/null 2>&1 \
@@ -26,21 +26,8 @@ for i in $(seq 1 30); do
   ok=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.succeeded}' 2>/dev/null)
   bad=$(kubectl get job "$JOB_NAME" -n mlflow -o jsonpath='{.status.failed}' 2>/dev/null)
   if [[ "$ok" == "1" ]]; then
-    kubectl logs -n mlflow -l job-name="$JOB_NAME" 2>/dev/null | python3 -c '
-import json, sys
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        d = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if d.get("event") == "uploaded":
-        print(f"   {d[\"uri\"]:<34} {d[\"rows\"]:>5} рядків  sha {d[\"digest\"]}")
-    elif d.get("event") == "bucket_created":
-        print(f"   + створено бакет {d[\"bucket\"]}")
-'
+    kubectl logs -n mlflow -l job-name="$JOB_NAME" 2>/dev/null \
+      | python3 "$HERE/scripts/_summary.py"
     echo "   ✅ датасети на місці"
     exit 0
   fi

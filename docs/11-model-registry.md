@@ -461,4 +461,4 @@ make pipeline-run DATASET=v3   # на зсунутих даних → ВІДХИ
 | Prometheus Operator CRD | `podTargetLabels`, `jobLabel` — перевірено `kubectl explain` |
 | Kubernetes | 1.34 |
 | ArgoCD | 3.5.0 |
-| Образи | `mds06-mlflow-tools:v3`, `mds06-ml-model:v6` |
+| Образи | `mds06-mlflow-tools:v4`, `mds06-ml-model:v6` |

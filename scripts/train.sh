@@ -29,7 +29,7 @@ export GIT_SHA="${GIT_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo "
 export TRAINED_BY="${TRAINED_BY:-$(whoami 2>/dev/null || echo manual)}"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v4}"
 
 echo "── $JOB_NAME ──"
 echo "   експеримент:  $EXPERIMENT"
