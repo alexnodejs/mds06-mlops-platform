@@ -32,7 +32,10 @@ print(json.dumps({
   'n_estimators': sys.argv[2],
   'max_depth': sys.argv[3],
   'experiment': sys.argv[4],
-}))" "$SHA" "${N:-50,100,200}" "${D:-2,none}" "${EXPERIMENT:-iris-rf}")
+  # Тема 11: на якому датасеті тренувати. Валідатор приймає або коротку
+  # назву версії (v1/v2/v3), або URI в межах свого бакета.
+  'dataset': sys.argv[5],
+}))" "$SHA" "${N:-50,100,200}" "${D:-2,none}" "${EXPERIMENT:-iris-rf}" "${DATASET:-v2}")
 
 echo "── запускаю $NAME ──"
 echo "   $INPUT"

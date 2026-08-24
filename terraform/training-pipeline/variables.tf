@@ -22,7 +22,7 @@ variable "namespace" {
 variable "trainer_image" {
   description = <<-EOT
     Образ із train.py і promote.py. Порожній рядок = зібрати імʼя автоматично
-    з вашого акаунта: <account>.dkr.ecr.<region>.amazonaws.com/mds06-mlflow-tools:v4
+    з вашого акаунта: <account>.dkr.ecr.<region>.amazonaws.com/mds06-mlflow-tools:v5
   EOT
   type        = string
   default     = ""

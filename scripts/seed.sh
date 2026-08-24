@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export JOB_NAME="seed-$(date +%H%M%S)"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v4}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v5}"
 
 kubectl get ns mlflow >/dev/null 2>&1 || { echo "❌ немає namespace mlflow — спершу make up"; exit 1; }
 kubectl -n mlflow get secret mlflow-credentials >/dev/null 2>&1 \
