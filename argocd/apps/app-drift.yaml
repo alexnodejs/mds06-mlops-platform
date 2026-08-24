@@ -15,7 +15,7 @@
 #     руками; тепер порядок гарантує sync-wave: цей Application у хвилі 3,
 #     monitoring — у хвилі 0, і ArgoCD не почне хвилю, доки попередня не Healthy.
 #  2) Loki на loki.logging.svc.cluster.local:3100 — теж Тема 8.
-#  3) Образ mds06-mlflow-tools:v6 в ECR (нода тягне без секрета, у неї
+#  3) Образ mds06-mlflow-tools:v7 в ECR (нода тягне без секрета, у неї
 #     AmazonEC2ContainerRegistryReadOnly). Збірка ТІЛЬКИ
 #     docker buildx --platform linux/amd64: Mac розробника ARM, ноди x86_64,
 #     інакше под падає з 'exec format error'.

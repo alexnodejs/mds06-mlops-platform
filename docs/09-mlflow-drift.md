@@ -231,7 +231,7 @@ kubectl delete -f deploy/0-storage/smoke-test.yaml   # ПРИБРАТИ, це г
 make images
 ```
 
-Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v6`**,
+Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v7`**,
 `mds06-ml-model:v6`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
 якщо його немає; реєстр визначається з ваших креденшелів
 (`aws sts get-caller-identity`), а не зашитий у Makefile.
@@ -240,7 +240,7 @@ make images
 Забули — `exec format error`. Збірка `mds06-mlflow-tools` — 8-12 хв через
 QEMU-емуляцію, решта швидше.
 
-Один образ `mds06-mlflow-tools:v6` на три задачі:
+Один образ `mds06-mlflow-tools:v7` на три задачі:
 `command: ["python", "train.py"]` для Job тренування,
 `["python", "drift_exporter.py"]` для Deployment експортера і
 `["python", "promote.py"]` для кроку промоції Теми 10. Саме `promote.py` —
@@ -805,7 +805,7 @@ apps/                    код і Dockerfile
     promote.py               перевішує @champion (Тема 10) — саме він відрізняє v2 від v1
     requirements.txt         піни: mlflow 3.15.1, boto3, sklearn 1.9.0, numpy 2.5.2,
                              scipy 1.18.0, pandas, matplotlib, prometheus-client
-    Dockerfile               КОНТРАКТНИЙ образ mds06-mlflow-tools:v6 (обидва скрипти),
+    Dockerfile               КОНТРАКТНИЙ образ mds06-mlflow-tools:v7 (обидва скрипти),
                              збірка з КОРЕНЯ репозиторію
   drift-exporter/
     drift_exporter.py        Loki → ks_2samp / chisquare → Prometheus

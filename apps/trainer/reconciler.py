@@ -39,7 +39,6 @@ GitHub. Зміряно на живому прогоні, чим це закін�
     GET  /metrics     метрики Prometheus
 """
 
-import hashlib
 import json
 import os
 import threading
@@ -49,8 +48,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import boto3
 import mlflow
+from datasets_common import fetch
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 
 DATASET_URI = os.getenv("DATASET_URI", "s3://datasets/iris/v2.csv")
@@ -81,17 +80,16 @@ def log(**f):
 
 
 def storage_digest():
-    """SHA-256 вмісту файла в сховищі, перші 12 символів.
+    """Відбиток файла в сховищі. Визначення — одне на весь репозиторій
+    (datasets_common.sha12): sha256 байтів, перші 12 символів.
 
-    Рахуємо САМІ, а не читаємо метадані обʼєкта: метадані ставить той, хто
-    заливав, і їх можна поставити будь-які. Хеш вмісту підробити не можна.
-
-    ⚠️ endpoint_url явно — MLFLOW_S3_ENDPOINT_URL це змінна MLflow, не botocore.
+    🔴 Тут була пастка, яка мало не дала нескінченний цикл: тег dataset_digest
+    моделі раніше містив ВНУТРІШНІЙ хеш MLflow, а не sha256 файла. Два різні
+    алгоритми в порівнянні означають «завжди різні» — узгоджувач тренував би
+    на кожному циклі й виглядав би при цьому цілком робочим.
     """
-    bucket, _, key = DATASET_URI.removeprefix("s3://").partition("/")
-    s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
-    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-    return hashlib.sha256(body).hexdigest()[:12], len(body)
+    body, digest = fetch(DATASET_URI)
+    return digest, len(body)
 
 
 def champion_digest():

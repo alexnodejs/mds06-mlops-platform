@@ -18,8 +18,6 @@ JSON з полем input, а Alloy уже складає ці рядки в Loki
 Ендпоїнти (порт 9100): /metrics, /healthz, /simulate-drift?shift=0.8
 """
 
-import csv
-import io
 import json
 import os
 import random
@@ -117,21 +115,17 @@ def _reference_from_storage(uri: str):
 
     🔴 НАВІЩО ЦЕ ЗʼЯВИЛОСЬ У ТЕМІ 11. Доти еталон брався з `load_iris()` — і це
     було правильно, бо тренування брало звідти ж. Щойно тренування переїхало на
-    s3://datasets/iris/v2.csv (1500 рядків із шумом), зашитий еталон на 150
-    рядків почав описувати ІНШИЙ розподіл. KS-тест показував би дріфт на
-    спокійному трафіку — тобто експортер брехав би, і найгіршим способом:
-    правдоподібно.
+    s3://datasets/iris/v2.csv, зашитий еталон на 150 рядків почав описувати
+    ІНШИЙ розподіл. KS-тест показував би дріфт на спокійному трафіку — тобто
+    експортер брехав би, і найгіршим способом: правдоподібно.
 
-    ⚠️ endpoint_url передаємо ЯВНО: MLFLOW_S3_ENDPOINT_URL — змінна MLflow, а не
-    botocore. Без неї boto3 пішов би у справжній AWS S3 із ключами minioadmin.
+    Читання зі сховища — спільний модуль datasets_common: там одне визначення
+    відбитка і одна документована пастка з endpoint_url.
     """
-    import boto3  # локальний імпорт: без сховища експортер не тягне boto3 узагалі
+    from datasets_common import read_csv  # локальний імпорт: без сховища не потрібен
 
-    bucket, _, key = uri.removeprefix("s3://").partition("/")
-    s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
-    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-
-    rows = list(csv.DictReader(io.StringIO(body.decode())))
+    df, digest = read_csv(uri)
+    rows = df.to_dict("records")
     # Той самий split, що й у train.py: еталон — це TRAIN-частина, а не весь
     # файл. Інакше в еталон потрапили б рядки, яких модель не бачила.
     names = sorted({r["target"] for r in rows})

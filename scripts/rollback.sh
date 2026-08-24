@@ -44,7 +44,7 @@ export MODEL_VERSION="$TARGET"
 export MODEL_ALIAS="${MODEL_ALIAS:-champion}"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v6}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v7}"
 
 envsubst < "$HERE/k8s/trainer/promote-job.yaml" | kubectl apply -f - >/dev/null || exit 1
 

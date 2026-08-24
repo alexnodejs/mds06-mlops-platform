@@ -25,15 +25,14 @@ v3 існує заради єдиної демонстрації, якої в к
 зміни змісту, і питання «це той самий датасет?» втратило б сенс.
 """
 
-import hashlib
 import io
 import json
 import os
 
-import boto3
 import numpy as np
 import pandas as pd
 from botocore.exceptions import ClientError
+from datasets_common import s3_client, sha12
 from sklearn.datasets import load_iris
 
 BUCKET = os.getenv("DATASET_BUCKET", "datasets")
@@ -156,22 +155,6 @@ def build() -> dict[str, pd.DataFrame]:
     }
 
 
-def s3_client():
-    """Клієнт S3, який дивиться на MinIO, а не на справжній AWS.
-
-    🔴 `boto3.client("s3")` БЕЗ endpoint_url піде в AWS S3, навіть коли в поді
-    стоїть MLFLOW_S3_ENDPOINT_URL. Ця змінна — власність MLflow: він читає її
-    сам і передає в boto3 параметром. Сам botocore про неї не знає нічого.
-    Результат мовчазний і дорогий: ключі `minioadmin` летять в AWS, звідти
-    прилітає 403, і виглядає це як «зламався MinIO».
-
-    Тому endpoint передаємо ЯВНО. Порожня змінна = працюємо зі справжнім S3
-    (так само поводиться train.py), тож локальний прогін теж можливий.
-    """
-    endpoint = os.getenv("MLFLOW_S3_ENDPOINT_URL") or None
-    return boto3.client("s3", endpoint_url=endpoint)
-
-
 def main() -> None:
     s3 = s3_client()
 
@@ -188,7 +171,7 @@ def main() -> None:
         df.to_csv(buf, index=False)
         body = buf.getvalue().encode()
         key = f"{PREFIX}/{name}"
-        digest = hashlib.sha256(body).hexdigest()[:12]
+        digest = sha12(body)
 
         s3.put_object(Bucket=BUCKET, Key=key, Body=body,
                       ContentType="text/csv",

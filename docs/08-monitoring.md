@@ -47,7 +47,7 @@ kubectl get sc gp3        # немає -> kubectl apply -f deploy/0-storage/stor
 
 # 1. Образи в ECR. --platform linux/amd64 зашито в scripts/build-images.sh:
 #    мак розробника ARM, ноди EKS x86_64, без цього под падає з exec format error.
-make images               # mds06-ml-model:v6 + mds06-mlflow-tools:v6 + mds06-react-gitops:v2
+make images               # mds06-ml-model:v6 + mds06-mlflow-tools:v7 + mds06-react-gitops:v2
 
 # 2. Увесь стек однією командою
 make up

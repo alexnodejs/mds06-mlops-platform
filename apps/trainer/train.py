@@ -24,7 +24,6 @@ import os
 import tempfile
 from pathlib import Path
 
-import boto3
 import matplotlib
 
 # Agg — рендер у файл без графічного дисплея. БЕЗ цього рядка у контейнері
@@ -35,6 +34,7 @@ import matplotlib.pyplot as plt  # noqa: E402  (порядок навмисни�
 import mlflow
 import mlflow.sklearn
 import pandas as pd
+from datasets_common import read_csv
 from mlflow.models import infer_signature
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier
@@ -90,22 +90,11 @@ def log(**fields) -> None:
     print(json.dumps(fields, ensure_ascii=False, default=str), flush=True)
 
 
-def _read_s3_csv(uri: str) -> pd.DataFrame:
-    """Читає s3://bucket/key у DataFrame.
-
-    🔴 endpoint_url ПЕРЕДАЄМО ЯВНО. MLFLOW_S3_ENDPOINT_URL — змінна MLflow, а не
-    botocore: MLflow читає її сам і передає в boto3 параметром. `boto3.client("s3")`
-    без endpoint_url піде у СПРАВЖНІЙ AWS S3 із ключами `minioadmin`, отримає 403,
-    і виглядатиме це як «зламався MinIO».
-    """
-    bucket, _, key = uri.removeprefix("s3://").partition("/")
-    s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
-    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-    return pd.read_csv(io.BytesIO(body))
-
-
 def load_dataset():
-    """Повертає (X, y, class_names, dataset) — де dataset це обʼєкт MLflow або None.
+    """Повертає (X, y, class_names, dataset, file_digest).
+
+    file_digest — sha256 БАЙТІВ файла (див. datasets_common). Саме він іде в
+    тег версії моделі, бо за ним узгоджувач звіряє стан.
 
     Фолбек на load_iris() свідомий: він рятує локальний прогін без кластера і
     перший запуск, коли сейдинг ще не відпрацював. Але фолбек ГУЧНИЙ — подія в
@@ -114,7 +103,7 @@ def load_dataset():
     """
     if DATASET_URI:
         try:
-            df = _read_s3_csv(DATASET_URI)
+            df, file_digest = read_csv(DATASET_URI)
             class_names = sorted(df["target"].unique())
             X = df[FEATURES]
             # Мітки в CSV — рядки ("setosa"), а моделі потрібні індекси.
@@ -125,8 +114,11 @@ def load_dataset():
             dataset = mlflow.data.from_pandas(df, source=DATASET_URI, name="iris",
                                               targets="target")
             log(event="dataset_loaded", uri=DATASET_URI, rows=len(df),
-                classes=class_names, digest=dataset.digest)
-            return X, y, [str(c) for c in class_names], dataset
+                classes=class_names, digest=file_digest, mlflow_digest=dataset.digest)
+            # Повертаємо ВІДБИТОК ФАЙЛА, а не внутрішній digest MLflow: саме за
+            # ним узгоджувач вирішує, чи розійшлись дані з моделлю. Два різні
+            # алгоритми в цій ролі означали б вічну розсинхронізацію.
+            return X, y, [str(c) for c in class_names], dataset, file_digest
         except Exception as e:  # noqa: BLE001
             log(event="dataset_unavailable", uri=DATASET_URI, error=str(e),
                 hint="падаю на вбудований load_iris(); запустіть `make seed`")
@@ -134,7 +126,7 @@ def load_dataset():
     data = load_iris()
     X = pd.DataFrame(data.data, columns=FEATURES)
     log(event="dataset_builtin", rows=len(X), hint="дані з пакета sklearn, не зі сховища")
-    return X, data.target, [str(n) for n in data.target_names], None
+    return X, data.target, [str(n) for n in data.target_names], None, None
 
 
 def confusion_png(y_test, y_pred, class_names, path: Path) -> None:
@@ -330,7 +322,7 @@ def register_best(best):
 def main() -> None:
     # X — DataFrame, а не numpy: так у signature і input_example будуть ІМЕНА
     # колонок, і в MLflow UI видно, що саме модель чекає на вході.
-    X, y, class_names, dataset = load_dataset()
+    X, y, class_names, dataset, file_digest = load_dataset()
     split = train_test_split(
         X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
@@ -354,7 +346,7 @@ def main() -> None:
     best = max(results, key=lambda r: (r["f1"], r["accuracy"]))
     # Digest датасету їде разом із переможцем: теги вішаються на ВЕРСІЮ моделі,
     # а версія створюється нижче, коли обʼєкта dataset у тій функції вже немає.
-    best["dataset_digest"] = dataset.digest if dataset is not None else None
+    best["dataset_digest"] = file_digest
     log(event="best_run", run_id=best["run_id"], f1=best["f1"], accuracy=best["accuracy"])
 
     # Єдиний випадок, коли реєстрацію МОЖНА мовчки пропустити, — файловий
