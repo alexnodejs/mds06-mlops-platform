@@ -53,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: drift-exporter
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v7
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v8
           # Always, а не IfNotPresent (граблі №6 попередніх тем): з кешем ноди
           # ви годину дебажите код, який давно виправили.
           imagePullPolicy: Always

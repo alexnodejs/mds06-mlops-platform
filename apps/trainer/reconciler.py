@@ -19,9 +19,9 @@ GitHub. Зміряно на живому прогоні, чим це закін�
 
 Стан порівнюється так:
 
-    digest файла в сховищі   vs   тег dataset_digest чинного @champion
-            різні  →  тренуємо
-            однакові →  нічого не робимо
+    чи є в реєстрі версія з тегом dataset_digest = відбиток файла?
+            немає →  тренуємо
+            є     →  нічого не робимо (уже пробували, результат відомий)
 
 Звідси безкоштовно випливає все, чого бракувало:
   • дедуплікація — три файли дають одне порівняння;
@@ -92,8 +92,41 @@ def storage_digest():
     return digest, len(body)
 
 
+def already_trained(digest):
+    """Чи тренували ми вже НА ЦИХ даних — байдуже, з яким результатом.
+
+    🔴 ТУТ БУВ НЕСКІНЧЕННИЙ ЦИКЛ, і його варто розібрати на занятті.
+    Перша версія порівнювала відбиток сховища з тегом ЧИННОГО @champion. Логіка
+    здавалась очевидною: «модель у проді навчена не на тих даних — тренуємо».
+    Але quality gate має повне право ВІДХИЛИТИ нову модель: дані змінились, а
+    краще не стало. Тоді champion лишається старим, розбіжність нікуди не
+    дінеться — і наступний цикл запускає те саме тренування. І наступний. І так
+    кожні пʼять хвилин, вічно, з виглядом цілком робочої системи.
+
+    Правильне питання не «чи навчений прод на цих даних», а «чи ми вже
+    ПРОБУВАЛИ ці дані». Якщо будь-яка версія в реєстрі має цей відбиток —
+    пробували, і результат уже відомий. Повторювати немає сенсу.
+
+    Це та сама відмінність, що між «стан не збігається з бажаним» і «ми вже
+    зробили все, що могли»: узгоджувач мусить зупинятись на другому.
+    """
+    try:
+        found = mlflow.MlflowClient().search_model_versions(
+            f"name = '{MODEL_NAME}' and tags.dataset_digest = '{digest}'", max_results=1)
+        return len(found) > 0
+    except Exception as e:  # noqa: BLE001
+        # Не змогли перевірити — вважаємо, що тренували. Зайвий пропуск
+        # виправить наступний цикл; зайве тренування коштує грошей і часу.
+        log(event="registry_check_failed", error=str(e), decision="пропускаю цикл")
+        return True
+
+
 def champion_digest():
-    """Тег dataset_digest чинної моделі, або None, якщо моделі ще немає."""
+    """Відбиток даних чинної моделі — лише для логів і метрики.
+
+    Рішення на ньому НЕ будується (див. already_trained), але бачити його
+    корисно: він відповідає на питання «на чому працює прод просто зараз».
+    """
     try:
         mv = mlflow.MlflowClient().get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
         return (mv.tags or {}).get("dataset_digest")
@@ -164,15 +197,17 @@ def reconcile(reason):
         RECONCILES.labels(result="storage_error").inc()
         return
 
-    want = champion_digest()
-    if have == want:
-        DRIFTED.set(0)
+    prod = champion_digest()
+    DRIFTED.set(0 if have == prod else 1)
+
+    if already_trained(have):
         RECONCILES.labels(result="in_sync").inc()
-        log(event="in_sync", reason=reason, digest=have)
+        log(event="in_sync", reason=reason, digest=have, champion=prod,
+            detail=("прод на цих даних" if have == prod
+                    else "на цих даних уже тренувались, gate не пропустив"))
         return
 
-    DRIFTED.set(1)
-    log(event="out_of_sync", reason=reason, storage=have, champion=want, bytes=size)
+    log(event="out_of_sync", reason=reason, storage=have, champion=prod, bytes=size)
 
     if training_running():
         # Не помилка: цикл повториться через RESYNC і побачить той самий стан.

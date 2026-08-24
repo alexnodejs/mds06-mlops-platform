@@ -4,9 +4,9 @@
 #  Level-triggered, а не edge-triggered. Питання не «чи щось сталось», а
 #  «чи розійшлись дані з моделлю»:
 #
-#      digest файла в сховищі  vs  тег dataset_digest чинного @champion
-#              різні   →  тренуємо
-#              однакові →  нічого не робимо
+#      чи є в реєстрі версія з тегом dataset_digest = відбиток файла?
+#              немає →  тренуємо
+#              є     →  нічого не робимо (уже пробували)
 #
 #  Подія MinIO (POST /) лише БУДИТЬ цикл — рівно як webhook у ArgoCD лише
 #  прискорює опитування Git, не замінюючи його. Рішення завжди ухвалює
@@ -51,7 +51,7 @@ spec:
         - name: reconciler
           # Образ тренера: у ньому вже є mlflow (читати теги моделі), boto3
           # (читати файл зі сховища) і prometheus-client (метрики).
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v7
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v8
           command: ["python", "reconciler.py"]
           ports:
             - name: http

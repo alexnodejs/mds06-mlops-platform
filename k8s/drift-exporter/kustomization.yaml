@@ -16,4 +16,4 @@ resources:
 # Мутабельні теги (:latest) не використовуємо принципово — граблі №6.
 images:
   - name: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools
-    newTag: v7
+    newTag: v8

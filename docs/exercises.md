@@ -41,7 +41,7 @@ kubectl -n ml-demo scale deploy/load-generator --replicas=1   # або make load
 
 ```bash
 # Реєстр беремо з ваших креденшелів, а не зашиваємо чужий номер акаунта.
-IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v7
+IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v8
 
 tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
   kubectl -n mlflow run "$1" --rm -i --restart=Never --image="$IMG" \
@@ -147,7 +147,7 @@ PROMOTE=false make train         # зареєструвати версію, ал
 - Якщо Job у `ImagePullBackOff`: приватний ECR працює без `imagePullSecret`
   лише тому, що на node role висить `AmazonEC2ContainerRegistryReadOnly`.
   Перевірте, що тег у ECR збігається з тим, що підставив `train.sh`
-  (`mds06-mlflow-tools:v7`) — зібрати: `make images`.
+  (`mds06-mlflow-tools:v8`) — зібрати: `make images`.
   Якщо в `CreateContainerConfigError` — немає Secret `mlflow-credentials`.
 
 ---
@@ -354,7 +354,7 @@ kubectl -n mlflow exec sts/postgres -- \
 
 ### 4б. Evidently: багатий звіт як артефакт (слайд 35, лабораторна частина)
 
-**Evidently НЕМА в образі `mds06-mlflow-tools:v7`** — і це свідомо: +500-700 MiB
+**Evidently НЕМА в образі `mds06-mlflow-tools:v8`** — і це свідомо: +500-700 MiB
 (pyarrow, plotly, litestar, statsmodels, nltk) заради HTML, який у гарячому
 шляху не потрібен. У `apps/trainer/requirements.txt` рядок `evidently==0.7.21`
 лежить закоментованим.
@@ -1033,13 +1033,13 @@ aws ecr get-login-password --region eu-central-1 | docker login --username AWS -
 
 # Контекст — КОРІНЬ репозиторію: Dockerfile копіює і з apps/trainer/, і з apps/drift-exporter/
 docker buildx build --platform linux/amd64 -f apps/trainer/Dockerfile \
-  -t $REG/mds06-mlflow-tools:v7 --push .        # 8-12 хв через QEMU
+  -t $REG/mds06-mlflow-tools:v8 --push .        # 8-12 хв через QEMU
 
 # ручний прогін на новому образі
-TRAINER_IMAGE=$REG/mds06-mlflow-tools:v7 make train
+TRAINER_IMAGE=$REG/mds06-mlflow-tools:v8 make train
 
 # пайплайн: `make pipeline-up` змінних не передає, тому один раз явно
-cd terraform/training-pipeline && terraform apply -var "trainer_image=$REG/mds06-mlflow-tools:v7"
+cd terraform/training-pipeline && terraform apply -var "trainer_image=$REG/mds06-mlflow-tools:v8"
 cd - && make pipeline-run N=10 D=1
 ```
 

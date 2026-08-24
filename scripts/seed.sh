@@ -16,7 +16,7 @@ export NOISE_STD_FRAC="${NOISE:-0.5}"
 export V3_LABEL_NOISE="${LABEL_NOISE:-0.20}"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v7}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v8}"
 
 kubectl get ns mlflow >/dev/null 2>&1 || { echo "❌ немає namespace mlflow — спершу make up"; exit 1; }
 kubectl -n mlflow get secret mlflow-credentials >/dev/null 2>&1 \

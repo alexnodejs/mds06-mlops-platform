@@ -18,7 +18,7 @@ build() { # <репозиторій> <тег> <шлях до Dockerfile> <кон
 
 # Контракт: ОДИН образ mds06-mlflow-tools містить і train.py, і drift_exporter.py.
 # Контекст — корінь репозиторію, бо Dockerfile копіює з двох різних тек.
-build mds06-mlflow-tools v7 apps/trainer/Dockerfile       .
+build mds06-mlflow-tools v8 apps/trainer/Dockerfile       .
 build mds06-ml-model     v6 apps/model-api/Dockerfile     apps/model-api
 build mds06-react-gitops v2 apps/react-gitops/Dockerfile  apps/react-gitops
 
