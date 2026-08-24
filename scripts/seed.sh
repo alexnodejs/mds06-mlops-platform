@@ -10,6 +10,10 @@ export AWS_PROFILE="${AWS_PROFILE:-goit-aws-mds}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
 export JOB_NAME="seed-$(date +%H%M%S)"
+# Дефолти дублюють seed_datasets.py навмисно: envsubst не має значень за
+# замовчуванням, а порожній рядок у env перебив би дефолт у коді.
+export NOISE_STD_FRAC="${NOISE:-0.5}"
+export V3_LABEL_NOISE="${LABEL_NOISE:-0.20}"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
 ).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v5}"

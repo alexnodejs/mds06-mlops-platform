@@ -72,7 +72,7 @@ status: ## що зараз працює в кластері
 loadgen: ## увімкнути генератор трафіку (без нього графіки порожні)
 	kubectl -n ml-demo scale deploy/load-generator --replicas=1
 
-seed: ## Тема 11: покласти датасети (v1/v2/v3) у MinIO
+seed: ## Тема 11: покласти датасети у MinIO [NOISE=0.5 LABEL_NOISE=0.2]
 	@bash scripts/seed.sh
 
 rollback: ## Тема 11: відкотити модель на попередню версію [VERSION=N]

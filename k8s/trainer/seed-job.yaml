@@ -25,6 +25,14 @@ spec:
         - name: seed
           image: ${TRAINER_IMAGE}
           command: ["python", "seed_datasets.py"]
+          env:
+            # Ручки, щоб «змінити дані» було однією командою на занятті:
+            #   make seed NOISE=0.8   -> інші дані, інший digest
+            # Порожнє значення = дефолт зі seed_datasets.py.
+            - name: NOISE_STD_FRAC
+              value: "${NOISE_STD_FRAC}"
+            - name: V3_LABEL_NOISE
+              value: "${V3_LABEL_NOISE}"
           envFrom:
             # Дає AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY і
             # MLFLOW_S3_ENDPOINT_URL. Останню seed_datasets.py передає в boto3
