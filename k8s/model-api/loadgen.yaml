@@ -60,11 +60,46 @@ data:
 
     FIELDS = ("sepal_length", "sepal_width", "petal_length", "petal_width")
 
-    # Той САМИЙ split, що використовує модель і еталон дріфт-експортера
-    # (random_state=42, test_size=0.2, stratify) — інакше порівнювати немає сенсу.
-    _d = load_iris()
-    X_TRAIN, _, _, _ = train_test_split(
-        _d.data, _d.target, test_size=0.2, random_state=42, stratify=_d.target)
+    # 🔴 ТРАФІК МУСИТЬ ЙТИ З ТОГО САМОГО ДАТАСЕТУ, ЩО Й ЕТАЛОН ДРІФТУ.
+    #
+    # Це коштувало одного розгортання. Тема 11 перенесла тренування й еталон на
+    # s3://datasets/iris/v2.csv, а генератор лишився на load_iris(). Розподіли
+    # різні — і KS-тест ЧЕСНО показав дріфт на спокійному трафіку: одиниці на
+    # petal_length і petal_width одразу після підйому стека.
+    #
+    # Урок ширший за цей файл: у дріфт-моніторингу «еталон» і «поточні дані»
+    # мусять походити з одного джерела, інакше ви міряєте не дріфт, а власну
+    # неузгодженість. І виглядає це правдоподібно — найгірший вид помилки.
+    #
+    # Той САМИЙ split (random_state=42, test_size=0.2, stratify), що в train.py
+    # і в drift_exporter.py — інакше порівнювати немає сенсу.
+    DATASET_URI = os.getenv("DATASET_URI", "s3://datasets/iris/v2.csv")
+
+    def _pool():
+        """Рядки, з яких ліпимо запити: спершу зі сховища, у крайньому разі — sklearn."""
+        if DATASET_URI:
+            try:
+                import csv, io, boto3
+                bucket, _, key = DATASET_URI.removeprefix("s3://").partition("/")
+                # endpoint_url ЯВНО: MLFLOW_S3_ENDPOINT_URL — змінна MLflow, а не
+                # botocore. Без неї boto3 піде у справжній AWS S3 і отримає 403.
+                s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
+                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                rows = list(csv.DictReader(io.StringIO(body.decode())))
+                names = sorted({r["target"] for r in rows})
+                y = [names.index(r["target"]) for r in rows]
+                idx, _, _, _ = train_test_split(
+                    list(range(len(rows))), y, test_size=0.2, random_state=42, stratify=y)
+                print(f"джерело трафіку: {DATASET_URI}, {len(idx)} рядків", flush=True)
+                return [[float(rows[i][f]) for f in FIELDS] for i in idx]
+            except Exception as e:
+                print(f"сховище недоступне ({e}); беру load_iris()", flush=True)
+        _d = load_iris()
+        X, _, _, _ = train_test_split(
+            _d.data, _d.target, test_size=0.2, random_state=42, stratify=_d.target)
+        return X.tolist()
+
+    X_TRAIN = _pool()
 
     def payload():
         r = random.random()
@@ -84,7 +119,7 @@ data:
         good = [p for p in sample if p["sepal_width"] != "abc"]
         print("selftest: битих", bad, "із 3000")
         for i, f in enumerate(FIELDS):
-            pv = ks_2samp(X_TRAIN[:, i], [g[f] for g in good]).pvalue
+            pv = ks_2samp([r[i] for r in X_TRAIN], [g[f] for g in good]).pvalue
             flag = "ДРІФТ" if pv < 0.01 else "ok"
             print(f"  {f:14} p={pv:.3e}  {flag}")
         raise SystemExit
