@@ -63,6 +63,15 @@ spec:
             #           Step Functions (Тема 10)
             - name: PROMOTE_TO_CHAMPION
               value: "${PROMOTE_TO_CHAMPION}"
+            # ── Тема 11: звʼязок моделі з даними, кодом і людиною (слайд 16) ──
+            # Ці три значення стають ТЕГАМИ версії моделі в реєстрі. Без них
+            # версія відповідає лише на питання «яка вона за рахунком».
+            - name: DATASET_URI
+              value: "${DATASET_URI}"
+            - name: GIT_SHA
+              value: "${GIT_SHA}"
+            - name: TRAINED_BY
+              value: "${TRAINED_BY}"
           resources:
             requests:
               cpu: 200m

@@ -1,0 +1,52 @@
+# Два Service, які НЕ їздять: стабільні точки скрейпу для кожного варіанту.
+#
+# НАВІЩО ВОНИ ІСНУЮТЬ. Бойовий Service `ml-model` показує лише на активний
+# варіант. Якби ServiceMonitor скрейпив саме його, то після перемикання на green
+# метрики blue зникли б із Prometheus узагалі — а дивитись треба саме на них,
+# щоб вирішити, відкочуватись чи ні. Тут скрейп ІНВАРІАНТНИЙ до перемикання:
+# кожен под скрейпиться рівно один раз, незалежно від того, куди йде трафік.
+#
+# Ціна: нуль подів, нуль CPU, нуль пам'яті. Service — це запис у iptables/IPVS,
+# а не процес.
+#
+# ⚠️ Обидва мають лейбл `app: ml-model` — за ним їх знаходить ServiceMonitor.
+# Разом із `jobLabel: app` це лишає лейбл `job="ml-model"` таким самим, як у
+# Темі 8, тож усі наявні запити й панелі продовжують працювати.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-model-blue
+  namespace: ml-demo
+  labels:
+    app: ml-model
+    variant: blue
+spec:
+  type: ClusterIP
+  selector:
+    variant: blue
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Він же — ціль тіньового трафіку: SHADOW_URL у генераторі вказує сюди, тож
+# green отримує ТОЙ САМИЙ payload, що й blue. Через це різниця в передбаченнях
+# є різницею МОДЕЛЕЙ, а не наслідком того, що їм дісталися різні квіти.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-model-green
+  namespace: ml-demo
+  labels:
+    app: ml-model
+    variant: green
+spec:
+  type: ClusterIP
+  selector:
+    variant: green
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

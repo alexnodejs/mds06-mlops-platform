@@ -1,15 +1,19 @@
-# ML-сервіс на FastAPI (слайд 30): модель у образі, логи JSON у stdout.
+# GREEN — тіньовий варіант сервісу моделі. Тема 11, слайди 34-35.
 # Анотацій prometheus.io/scrape НЕМАЄ свідомо — скрейпимо через ServiceMonitor
 # (Prometheus Operator ігнорує ці анотації, це реліквія голого Prometheus).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ml-model
+  name: ml-model-green
   namespace: ml-demo
   labels:
-    app: ml-model
+    app: ml-model-green
 spec:
-  replicas: 2
+  # 0 реплік за замовчуванням: green потрібен ЛИШЕ на занятті, і той самий
+  # ідіом уже діє для load-generator (loadgen.yaml). Вмикається `make bluegreen-up`.
+  # Заодно це знімає питання «а чому под крутить модель із образу» — поки
+  # аліаса @challenger немає, вмикати green немає сенсу.
+  replicas: 0
   selector:
     matchLabels:
       # ⛔ НЕ ДОДАВАТИ СЮДИ variant. spec.selector ІМУТАБЕЛЬНИЙ: apply з новим
@@ -20,17 +24,22 @@ spec:
       #
       # Цього й не треба: селектор має бути ПІДМНОЖИНОЮ лейблів шаблона, а не
       # дорівнювати їм. Тому variant нижче додається без жодних наслідків.
-      app: ml-model
+      app: ml-model-green
   template:
     metadata:
       labels:
-        app: ml-model          # цей лейбл Alloy кладе у мітку Loki `app`
+        # 🔴 САМЕ ml-model-green, а НЕ ml-model. Alloy кладе цей лейбл у мітку
+        # Loki `app`, а дріфт-експортер Теми 9 читає рівно {app="ml-model"}.
+        # Зі спільним app він змішав би прогнози champion і challenger в
+        # одному хі-квадраті, а вікно 3000 записів подвоїлось би — при ліміті
+        # Loki 5000 воно почало б мовчки обрізатись.
+        app: ml-model-green
         # ⭐ Тема 11: мітка варіанту. Її читають ДВОЄ:
         #   Service ml-model  — вирішує, куди йде бойовий трафік;
         #   ServiceMonitor    — через podTargetLabels кладе її на КОЖНУ метрику
         #                       цього пода, тож blue і green видно окремо в
         #                       Grafana без жодної зміни app.py.
-        variant: blue
+        variant: green
     spec:
       securityContext:
         # runAsNonRoot без runAsUser впаде, якщо в образі не заданий USER —
@@ -67,8 +76,11 @@ spec:
               value: http://mlflow.mlflow.svc.cluster.local:80
             - name: MLFLOW_MODEL_NAME
               value: iris-rf
+            # ⭐ ЄДИНА ЗМІСТОВНА ВІДМІННІСТЬ ВІД BLUE: green бере КАНДИДАТА.
+            # Саме тому blue-green тут не «дві копії того самого», а
+            # порівняння двох різних моделей на однаковому трафіку.
             - name: MLFLOW_MODEL_ALIAS
-              value: champion
+              value: challenger
             - name: MODEL_RELOAD_SECONDS
               value: "30"
           # sklearn імпортується ~3-5 с, тому readiness має запас 30 с,

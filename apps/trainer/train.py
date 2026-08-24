@@ -17,12 +17,14 @@ AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION.
     MLFLOW_TRACKING_URI=file:///tmp/mlruns python train_mlflow.py
 """
 
+import io
 import itertools
 import json
 import os
 import tempfile
 from pathlib import Path
 
+import boto3
 import matplotlib
 
 # Agg — рендер у файл без графічного дисплея. БЕЗ цього рядка у контейнері
@@ -58,6 +60,17 @@ RANDOM_STATE = int(os.getenv("RANDOM_STATE", "42"))
 # збігалася з контрактом API, а не з внутрішнім іменуванням датасету.
 FEATURES = ["sepal_length", "sepal_width", "petal_length", "petal_width"]
 
+# ⭐ Тема 11: дані приходять ЗІ СХОВИЩА, а не з пакета sklearn.
+# Порожній рядок = працюємо на вбудованому load_iris(); саме так цей файл
+# лишається запускним без кластера:
+#     MLFLOW_TRACKING_URI=file:///tmp/mlruns DATASET_URI= python train.py
+DATASET_URI = os.getenv("DATASET_URI", "s3://datasets/iris/v2.csv")
+
+# Хто і з якого коду тренував — теги версії моделі (слайди 16 і 22).
+# Порожні значення краще за вигадані: «невідомо» чесніше, ніж «localhost».
+GIT_SHA = os.getenv("GIT_SHA", "")
+TRAINED_BY = os.getenv("TRAINED_BY", "")
+
 # Сітка гіперпараметрів: 3 x 2 = 6 запусків. Саме щоб у MLflow UI було ЩО
 # порівнювати (слайди 31-33): max_depth=2 навмисно недовчений, тож у таблиці
 # видно розкид метрик, а не шість однакових рядків.
@@ -75,6 +88,53 @@ def log(**fields) -> None:
     """JSON-лог у stdout — той самий формат, що в app.py Теми 8, тож логи
     Job-а читаються в Loki тим самим запитом."""
     print(json.dumps(fields, ensure_ascii=False, default=str), flush=True)
+
+
+def _read_s3_csv(uri: str) -> pd.DataFrame:
+    """Читає s3://bucket/key у DataFrame.
+
+    🔴 endpoint_url ПЕРЕДАЄМО ЯВНО. MLFLOW_S3_ENDPOINT_URL — змінна MLflow, а не
+    botocore: MLflow читає її сам і передає в boto3 параметром. `boto3.client("s3")`
+    без endpoint_url піде у СПРАВЖНІЙ AWS S3 із ключами `minioadmin`, отримає 403,
+    і виглядатиме це як «зламався MinIO».
+    """
+    bucket, _, key = uri.removeprefix("s3://").partition("/")
+    s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    return pd.read_csv(io.BytesIO(body))
+
+
+def load_dataset():
+    """Повертає (X, y, class_names, dataset) — де dataset це обʼєкт MLflow або None.
+
+    Фолбек на load_iris() свідомий: він рятує локальний прогін без кластера і
+    перший запуск, коли сейдинг ще не відпрацював. Але фолбек ГУЧНИЙ — подія в
+    лозі, — бо мовчазний відкат на інші дані означав би, що модель навчена не на
+    тому, що написано в її тегах.
+    """
+    if DATASET_URI:
+        try:
+            df = _read_s3_csv(DATASET_URI)
+            class_names = sorted(df["target"].unique())
+            X = df[FEATURES]
+            # Мітки в CSV — рядки ("setosa"), а моделі потрібні індекси.
+            # Порядок класів беремо відсортований, тобто той самий, що в
+            # load_iris(), — інакше номер класу означав би різне в різних
+            # запусках, і матриця невідповідностей стала б нечитабельною.
+            y = df["target"].map({c: i for i, c in enumerate(class_names)}).to_numpy()
+            dataset = mlflow.data.from_pandas(df, source=DATASET_URI, name="iris",
+                                              targets="target")
+            log(event="dataset_loaded", uri=DATASET_URI, rows=len(df),
+                classes=class_names, digest=dataset.digest)
+            return X, y, [str(c) for c in class_names], dataset
+        except Exception as e:  # noqa: BLE001
+            log(event="dataset_unavailable", uri=DATASET_URI, error=str(e),
+                hint="падаю на вбудований load_iris(); запустіть `make seed`")
+
+    data = load_iris()
+    X = pd.DataFrame(data.data, columns=FEATURES)
+    log(event="dataset_builtin", rows=len(X), hint="дані з пакета sklearn, не зі сховища")
+    return X, data.target, [str(n) for n in data.target_names], None
 
 
 def confusion_png(y_test, y_pred, class_names, path: Path) -> None:
@@ -97,12 +157,19 @@ def confusion_png(y_test, y_pred, class_names, path: Path) -> None:
     plt.close(fig)
 
 
-def train_one(params, data, split, tmp: Path):
+def train_one(params, class_names, split, tmp: Path, dataset=None):
     """Один запуск: mlflow.start_run() -> параметри -> метрики -> артефакти -> модель."""
     X_train, X_test, y_train, y_test = split
-    class_names = [str(n) for n in data.target_names]
 
     with mlflow.start_run(run_name=f"rf_n{params['n_estimators']}_d{params['max_depth']}") as run:
+        # ── log_input: НА ЯКИХ ДАНИХ (слайд 16) ───────────────────────────
+        # Рідний Dataset API MLflow, а не саморобний тег. Він рахує digest —
+        # хеш вмісту — і зберігає схему та профіль. Саме digest відповідає на
+        # питання «це той самий файл, чи його підмінили»: імена й шляхи брешуть,
+        # хеш — ні. У MLflow UI це окрема вкладка Datasets у запуску.
+        if dataset is not None:
+            mlflow.log_input(dataset, context="training")
+
         # ── log_param: ЩО ми налаштували (слайд 29) ───────────────────────
         # Гіперпараметри моделі + параметри розбиття. Без test_size і
         # random_state два запуски з однаковим n_estimators були б
@@ -206,27 +273,66 @@ def register_best(best):
     вирішувати: гірша модель уже була б у проді.
     """
     version = mlflow.register_model(best["uri"], MODEL_NAME).version
+    client = mlflow.MlflowClient()
+
+    # ⭐ ТЕМА 11, СЛАЙД 16: модель — не ізольований файл.
+    # Без цих тегів версія відповідає лише на питання «яка вона за рахунком».
+    # З ними — на всі чотири зі слайда 7: звідки взялась, хто натренував, на
+    # яких даних, з якими параметрами.
+    #
+    # Теги вішаємо на ВЕРСІЮ, а не на запуск: запусків у сітці шість, а в прод
+    # їде один. Питання «на яких даних працює те, що зараз обслуговує клієнтів»
+    # має отримати відповідь за один клік у реєстрі, без переходу в експерименти.
+    tags = {
+        "git_sha": GIT_SHA or "unknown",
+        "dataset": DATASET_URI or "sklearn:load_iris",
+        "dataset_digest": best.get("dataset_digest") or "unknown",
+        "trained_by": TRAINED_BY or "manual",
+        # Слайди 14-15 говорять про Draft/Staging/Production. У MLflow 3.x
+        # stage-и застарілі, тож статус тримаємо тегом, а «де воно зараз
+        # працює» — аліасом. Мапу одне в одне розписано в docs/11.
+        "status": "draft",
+    }
+    for key, value in tags.items():
+        client.set_model_version_tag(MODEL_NAME, version, key, value)
+
+    # Опис — те, що людина читає ПЕРШИМ, відкривши версію в UI. Тому тут
+    # не дублювання тегів, а вичавка: на чому вчилась, що вийшло, з якого коду.
+    client.update_model_version(
+        MODEL_NAME, version,
+        description=(
+            f"f1={best['f1']:.4f}, accuracy={best['accuracy']:.4f}\n"
+            f"дані: {DATASET_URI or 'sklearn:load_iris'}\n"
+            f"код: {GIT_SHA[:12] or 'невідомо'}\n"
+            f"хто: {TRAINED_BY or 'ручний запуск'}"
+        ),
+    )
 
     if not PROMOTE_TO_CHAMPION:
-        log(event="registered", model=MODEL_NAME, version=version, alias=None,
-            hint="аліас не переставлено: рішення за quality gate (Тема 10)")
+        # Слайд 15, Staging: модель пройшла тренування, але не перевірку.
+        # Аліас @challenger — це і є «кандидат»: саме його бере green у
+        # blue-green деплої (Тема 11) і саме його оцінює quality gate (Тема 10).
+        client.set_registered_model_alias(MODEL_NAME, "challenger", version)
+        client.set_model_version_tag(MODEL_NAME, version, "status", "staging")
+        log(event="registered", model=MODEL_NAME, version=version, alias="challenger",
+            hint="кандидат; у прод його пустить лише quality gate")
         return version
 
     # Alias замість давніх stage (Staging/Production): stage у MLflow 3.x
     # вважаються застарілими, alias можна перевісити на іншу версію одним
     # викликом, і посилання "models:/iris-rf@champion" у коді не змінюється.
     mlflow.MlflowClient().set_registered_model_alias(MODEL_NAME, "champion", version)
+    client.set_model_version_tag(MODEL_NAME, version, "status", "production")
     log(event="registered", model=MODEL_NAME, version=version, alias="champion")
     return version
 
 
 def main() -> None:
-    data = load_iris()
-    # DataFrame, а не numpy: так у signature і input_example будуть ІМЕНА
+    # X — DataFrame, а не numpy: так у signature і input_example будуть ІМЕНА
     # колонок, і в MLflow UI видно, що саме модель чекає на вході.
-    X = pd.DataFrame(data.data, columns=FEATURES)
+    X, y, class_names, dataset = load_dataset()
     split = train_test_split(
-        X, data.target, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=data.target
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
 
     mlflow.set_experiment(EXPERIMENT)
@@ -239,12 +345,16 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for n, depth in itertools.product(GRID_N_ESTIMATORS, GRID_MAX_DEPTH):
-            results.append(train_one({"n_estimators": n, "max_depth": depth}, data, split, tmp))
+            results.append(train_one({"n_estimators": n, "max_depth": depth},
+                                     class_names, split, tmp, dataset))
 
     # Найкращий — за f1 (macro). При однаковому f1 tie-break за accuracy:
     # на Iris кілька конфігурацій регулярно дають однакові метрики, і без
     # tie-break "найкращий" залежав би від порядку в сітці.
     best = max(results, key=lambda r: (r["f1"], r["accuracy"]))
+    # Digest датасету їде разом із переможцем: теги вішаються на ВЕРСІЮ моделі,
+    # а версія створюється нижче, коли обʼєкта dataset у тій функції вже немає.
+    best["dataset_digest"] = dataset.digest if dataset is not None else None
     log(event="best_run", run_id=best["run_id"], f1=best["f1"], accuracy=best["accuracy"])
 
     # Єдиний випадок, коли реєстрацію МОЖНА мовчки пропустити, — файловий

@@ -21,6 +21,7 @@
 довелося б перевіряти цей прапорець у кожному наступному кроці.
 """
 
+import os
 import re
 
 # Межі свідомо широкі: задача цієї перевірки — відсікти СМІТТЯ (літери,
@@ -33,6 +34,13 @@ MAX_GRID = 12  # 12 запусків х ~4 c = ще прийнятно для з
 # Ім'я експерименту їде в Kubernetes як значення env і в MLflow як ім'я.
 # Дозволяємо лише те, що безпечно в обох: без пробілів, лапок і слешів.
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
+
+# Тема 11: на якому датасеті тренувати. З CI приходить або коротка назва
+# версії ("v3"), або повний URI. Коротку розгортаємо самі — щоб у workflow не
+# доводилось писати s3://... і щоб не можна було послати под читати чужий бакет.
+DATASET_BUCKET = os.getenv("DATASET_BUCKET", "datasets")
+DATASET_PREFIX = os.getenv("DATASET_PREFIX", "iris")
+SAFE_VERSION = re.compile(r"^v[0-9]{1,3}$")
 
 
 def _ints(raw: str, field: str, hi: int) -> list[int]:
@@ -86,6 +94,20 @@ def handler(event, context):
             f"дозволено до {MAX_GRID}: заняття не має тривати довше за перерву"
         )
 
+    # Датасет: або "v2", або повний s3://. Усе інше — відмова.
+    raw_ds = str(event.get("dataset") or "v2").strip()
+    if SAFE_VERSION.match(raw_ds):
+        dataset_uri = f"s3://{DATASET_BUCKET}/{DATASET_PREFIX}/{raw_ds}.csv"
+    elif raw_ds.startswith(f"s3://{DATASET_BUCKET}/"):
+        # Повний URI приймаємо ЛИШЕ в межах свого бакета: інакше параметр із CI
+        # став би способом змусити под читати довільне сховище.
+        dataset_uri = raw_ds
+    else:
+        raise ValueError(
+            f"dataset: «{raw_ds}» — треба або версія (v1, v2, v3), "
+            f"або URI в межах s3://{DATASET_BUCKET}/"
+        )
+
     short_sha = commit_sha[:7]
 
     # Унікальний суфікс — з aws_request_id виклику Lambda. Він унікальний на
@@ -111,6 +133,7 @@ def handler(event, context):
         "job_name": f"train-{short_sha}-{uniq}",
         "promote_job_name": f"promote-{short_sha}-{uniq}",
         "experiment": experiment,
+        "dataset_uri": dataset_uri,
         "grid_n_estimators": ",".join(str(x) for x in n_estimators),
         "grid_max_depth": ",".join(depths),
         "runs": total,

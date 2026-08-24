@@ -128,7 +128,9 @@ WaitForFirstConsumer`. Порядок і гейти — у розділі «Шв
 
 ### ⚠️ Поди — вузьке місце, і воно бінд
 
-Заміряно: 2 × t3.medium дають **34 слоти подів** (по 17 на ноду, ліміт ENI).
+Заміряно: **3 × t3.medium дають 51 слот** (по 17 на ноду, ліміт ENI).
+Розкладка нижче — для двох нод, як було на момент написання Теми 9; вона
+лишається тут, бо саме вона пояснює, ЧОМУ довелось додати третю ноду.
 
 ```
 13  зайнято зараз (argocd 7 + kube-system 6)
@@ -229,8 +231,8 @@ kubectl delete -f deploy/0-storage/smoke-test.yaml   # ПРИБРАТИ, це г
 make images
 ```
 
-Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v2`**,
-`mds06-ml-model:v5`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
+Збирає й пушить три образи з `apps/`: **`mds06-mlflow-tools:v3`**,
+`mds06-ml-model:v6`, `mds06-react-gitops:v2`. Репозиторій ECR створюється сам,
 якщо його немає; реєстр визначається з ваших креденшелів
 (`aws sts get-caller-identity`), а не зашитий у Makefile.
 
@@ -238,7 +240,7 @@ make images
 Забули — `exec format error`. Збірка `mds06-mlflow-tools` — 8-12 хв через
 QEMU-емуляцію, решта швидше.
 
-Один образ `mds06-mlflow-tools:v2` на три задачі:
+Один образ `mds06-mlflow-tools:v3` на три задачі:
 `command: ["python", "train.py"]` для Job тренування,
 `["python", "drift_exporter.py"]` для Deployment експортера і
 `["python", "promote.py"]` для кроку промоції Теми 10. Саме `promote.py` —
@@ -433,7 +435,7 @@ def payload():
 класів (тоді хі-квадрат бачив би «дріфт» на чистих даних).
 
 **Перезбірка образу для правок генератора НЕ потрібна.** Скрипт лежить у
-ConfigMap, а не в образі, і `sklearn` у `mds06-ml-model:v5` уже є — на ньому
+ConfigMap, а не в образі, і `sklearn` у `mds06-ml-model:v6` уже є — на ньому
 працює сама модель:
 
 ```bash
@@ -786,14 +788,14 @@ apps/                    код і Dockerfile
     promote.py               перевішує @champion (Тема 10) — саме він відрізняє v2 від v1
     requirements.txt         піни: mlflow 3.15.1, boto3, sklearn 1.9.0, numpy 2.5.2,
                              scipy 1.18.0, pandas, matplotlib, prometheus-client
-    Dockerfile               КОНТРАКТНИЙ образ mds06-mlflow-tools:v2 (обидва скрипти),
+    Dockerfile               КОНТРАКТНИЙ образ mds06-mlflow-tools:v3 (обидва скрипти),
                              збірка з КОРЕНЯ репозиторію
   drift-exporter/
     drift_exporter.py        Loki → ks_2samp / chisquare → Prometheus
     test_drift.py            самоперевірка логіки (лежить і в образі)
     requirements.txt         строга підмножина apps/trainer/
     Dockerfile               необовʼязковий легкий образ, ~330 MiB
-  model-api/                 сервіс моделі Теми 8 (образ mds06-ml-model:v5)
+  model-api/                 сервіс моделі Теми 8 (образ mds06-ml-model:v6)
 scripts/
   up.sh down.sh ports.sh status.sh train.sh build-images.sh
                              те, що викликають цілі Makefile

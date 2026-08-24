@@ -43,6 +43,9 @@ on:
       experiment:
         description: 'Імʼя експерименту в MLflow'
         default: 'iris-rf'
+      dataset:
+        description: 'Версія датасету: v1 (150 рядків), v2 (1500), v3 (1500, зсунуті)'
+        default: 'v2'
 
 # ⭐ Без id-token: write GitHub не видасть OIDC-токен, і крок автентифікації
 # впаде з "Not authorized" — найчастіша помилка при налаштуванні OIDC.
@@ -89,8 +92,9 @@ jobs:
             --arg n      "${{ inputs.n_estimators || '40,90,180' }}" \
             --arg d      "${{ inputs.max_depth   || '2,none' }}" \
             --arg exp    "${{ inputs.experiment  || 'iris-rf' }}" \
+            --arg ds     "${{ inputs.dataset     || 'v2' }}" \
             '{commit_sha:$sha, ref:$ref, run_url:$url,
-              n_estimators:$n, max_depth:$d, experiment:$exp}')
+              n_estimators:$n, max_depth:$d, experiment:$exp, dataset:$ds}')
           echo "вхід: $INPUT"
 
           ARN=$(aws stepfunctions start-execution \

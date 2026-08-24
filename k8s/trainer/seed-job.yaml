@@ -1,0 +1,41 @@
+# Разовий Job, який кладе датасети в MinIO. Тема 11.
+#
+# Викликається `make seed` і кроком 4 у scripts/up.sh — тобто на КОЖНОМУ
+# підйомі стека. Причина: бакет живе на PVC, а PVC гине разом зі стеком
+# (reclaimPolicy: Delete у deploy/0-storage/storageclass-gp3.yaml). Датасет —
+# не виняток із цього правила, тому сейдинг мусить бути ідемпотентним.
+#
+# Окремий файл, а не прапорець у job.yaml: там жорстко `command: ["python",
+# "train.py"]`, і параметризувати команду означало б зробити обидва файли
+# гіршими заради економії двадцяти рядків.
+#
+# ⚠️ ArgoCD цей файл НЕ синкає — для нього немає Application, як і для job.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: mlflow
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: ${TRAINER_IMAGE}
+          command: ["python", "seed_datasets.py"]
+          envFrom:
+            # Дає AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY і
+            # MLFLOW_S3_ENDPOINT_URL. Останню seed_datasets.py передає в boto3
+            # ЯВНО параметром endpoint_url — сам botocore її не читає.
+            - secretRef:
+                name: mlflow-credentials
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # 1500 рядків × 5 колонок — це десятки кілобайт. Пам'ять тут
+              # тримає не датасет, а імпорт pandas + sklearn (~200 MiB).
+              memory: 512Mi

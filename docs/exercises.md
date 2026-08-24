@@ -40,7 +40,7 @@ kubectl -n ml-demo scale deploy/load-generator --replicas=1   # або make load
 
 ```bash
 # Реєстр беремо з ваших креденшелів, а не зашиваємо чужий номер акаунта.
-IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v2
+IMG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3
 
 tool() {   # використання:  tool <імʼя-пода> <<'PY' ... PY
   kubectl -n mlflow run "$1" --rm -i --restart=Never --image="$IMG" \
@@ -146,7 +146,7 @@ PROMOTE=false make train         # зареєструвати версію, ал
 - Якщо Job у `ImagePullBackOff`: приватний ECR працює без `imagePullSecret`
   лише тому, що на node role висить `AmazonEC2ContainerRegistryReadOnly`.
   Перевірте, що тег у ECR збігається з тим, що підставив `train.sh`
-  (`mds06-mlflow-tools:v2`) — зібрати: `make images`.
+  (`mds06-mlflow-tools:v3`) — зібрати: `make images`.
   Якщо в `CreateContainerConfigError` — немає Secret `mlflow-credentials`.
 
 ---
@@ -353,7 +353,7 @@ kubectl -n mlflow exec sts/postgres -- \
 
 ### 4б. Evidently: багатий звіт як артефакт (слайд 35, лабораторна частина)
 
-**Evidently НЕМА в образі `mds06-mlflow-tools:v2`** — і це свідомо: +500-700 MiB
+**Evidently НЕМА в образі `mds06-mlflow-tools:v3`** — і це свідомо: +500-700 MiB
 (pyarrow, plotly, litestar, statsmodels, nltk) заради HTML, який у гарячому
 шляху не потрібен. У `apps/trainer/requirements.txt` рядок `evidently==0.7.21`
 лежить закоментованим.

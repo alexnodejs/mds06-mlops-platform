@@ -1,16 +1,37 @@
-# ClusterIP 80 -> 8000. Порт ОБОВ'ЯЗКОВО іменований: ServiceMonitor
-# посилається на ІМ'Я порту Service, з безіменним портом таргет не з'явиться.
+# ⭐ ПЕРЕМИКАЧ ПРОДАКШНУ. Тема 11, слайд 35 (Blue-Green).
+#
+# Це той самий Service `ml-model`, на який ходять load-generator, port-forward і
+# promote.py. Змінилось одне: він більше не селектує «усі поди застосунку», а
+# показує рівно на ОДИН варіант. Один рядок нижче — і є те саме «переключення
+# трафіку миттєво», яке обіцяє слайд.
+#
+# ClusterIP 80 -> 8000. Порт ОБОВ'ЯЗКОВО іменований: ServiceMonitor посилається
+# на ІМ'Я порту, з безіменним портом таргет не з'явиться.
 apiVersion: v1
 kind: Service
 metadata:
   name: ml-model
   namespace: ml-demo
   labels:
-    app: ml-model            # за цим лейблом Service шукає ServiceMonitor
+    # ⚠️ БІЛЬШЕ НЕ `app: ml-model`, і це не косметика.
+    # ServiceMonitor шукає Service за лейблом app=ml-model. Якби перемикач теж
+    # його мав, поди активного варіанту скрейпились би ДВІЧІ — через цей Service
+    # і через свій variant-Service, — і sum(rate(...)) показував би подвійний
+    # трафік. Скрейп живе на service-variants.yaml, тут — лише маршрутизація.
+    role: router
 spec:
   type: ClusterIP
   selector:
-    app: ml-model
+    # ⭐ ЄДИНИЙ РЯДОК, ЯКИЙ ПЕРЕМИКАЄ ПРОДАКШН: blue <-> green.
+    #
+    # `app` тут навмисно немає: у blue він `ml-model`, у green —
+    # `ml-model-green` (щоб не змішались логи в Loki), тож спільний ключ
+    # лишається рівно один — variant.
+    #
+    # Перемикати ТРЕБА комітом у Git, а не `kubectl patch`: ArgoCD із selfHeal
+    # відкотить ручну правку за кілька секунд. Це не незручність, а найкоротша
+    # демонстрація GitOps у курсі — див. docs/11-model-registry.md.
+    variant: blue
   ports:
     - name: http
       port: 80

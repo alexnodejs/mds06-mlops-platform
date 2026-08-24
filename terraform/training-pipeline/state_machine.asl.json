@@ -62,7 +62,10 @@
                       { "name": "MLFLOW_EXPERIMENT_NAME", "value.$": "$.params.experiment" },
                       { "name": "GRID_N_ESTIMATORS", "value.$": "$.params.grid_n_estimators" },
                       { "name": "GRID_MAX_DEPTH", "value.$": "$.params.grid_max_depth" },
-                      { "name": "PROMOTE_TO_CHAMPION", "value": "false" }
+                      { "name": "PROMOTE_TO_CHAMPION", "value": "false" },
+                      { "name": "DATASET_URI", "value.$": "$.params.dataset_uri" },
+                      { "name": "GIT_SHA", "value.$": "$.params.commit_sha" },
+                      { "name": "TRAINED_BY", "value": "github-actions" }
                     ],
                     "resources": {
                       "requests": { "cpu": "200m", "memory": "512Mi" },

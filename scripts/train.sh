@@ -20,14 +20,22 @@ export GRID_MAX_DEPTH="${D:-2,none}"
 # Ручний запуск одразу ставить @champion. Пайплайн Теми 10 передає false і
 # вирішує це сам після порівняння метрик.
 export PROMOTE_TO_CHAMPION="${PROMOTE:-true}"
+# Тема 11: на якому датасеті вчимось і хто це запустив.
+#   make train DATASET=v3   -> перетренувати на зсунутих даних
+export DATASET_URI="${DATASET_URI:-s3://datasets/iris/${DATASET:-v2}.csv}"
+# Коміт беремо з git, а не з повітря: саме він потрапляє в тег git_sha і
+# відповідає на питання «з якого коду ця модель».
+export GIT_SHA="${GIT_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo "")}"
+export TRAINED_BY="${TRAINED_BY:-$(whoami 2>/dev/null || echo manual)}"
 export TRAINER_IMAGE="${TRAINER_IMAGE:-$(
   aws sts get-caller-identity --query Account --output text 2>/dev/null
-).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v2}"
+).dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3}"
 
 echo "── $JOB_NAME ──"
 echo "   експеримент:  $EXPERIMENT"
 echo "   n_estimators: $GRID_N_ESTIMATORS   max_depth: $GRID_MAX_DEPTH"
 echo "   промоція:     $PROMOTE_TO_CHAMPION"
+echo "   датасет:      $DATASET_URI"
 
 envsubst < "$HERE/k8s/trainer/job.yaml" | kubectl apply -f - >/dev/null || exit 1
 

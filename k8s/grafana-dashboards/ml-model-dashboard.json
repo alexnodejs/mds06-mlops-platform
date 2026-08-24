@@ -487,6 +487,164 @@
           "range": true
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "7a. Blue vs Green — запити за секунду",
+      "description": "Скільки запитів обробляє КОЖЕН варіант. Лейбл variant не з'явився в коді сервісу: його переносить ServiceMonitor через podTargetLabels прямо з лейбла пода. Поки трафік на blue, лінія green показує лише тіньові запити від генератора (SHADOW_URL). Після перемикання селектора Service лінії міняються місцями — і саме це видно як «переключили прод».",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "запитів/с",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (variant) (rate(predict_requests_total{namespace=\"ml-demo\"}[$__rate_interval]))",
+          "legendFormat": "{{variant}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "7b. Blue vs Green — p95 часу відповіді",
+      "description": "⚠️ Групування саме by (variant, le), а не by (le): гістограма Prometheus рахується по бакетах, і без variant у групуванні бакети blue і green склалися б в одну купу — p95 перетворився б на середнє по палаті й перестав би показувати, який варіант повільніший.",
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "запитів/с",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (variant, le) (rate(predict_latency_seconds_bucket{namespace=\"ml-demo\"}[$__rate_interval])))",
+          "legendFormat": "{{variant}} p95",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "7в. Яка модель у якому варіанті",
+      "description": "Самодіагностика blue-green. Якщо у green source=baked — аліаса @challenger у реєстрі немає, і под крутить модель, зашиту в образ. Тоді порівнювати нічого: обидва варіанти показували б те саме. Лікується `make train N=10 D=1 PROMOTE=false`.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (variant, version, source, model_type) (model_info{namespace=\"ml-demo\"})",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "preload": false,

@@ -6,7 +6,9 @@ namespace: ml-demo
 resources:
   - namespace.yaml
   - deployment.yaml
-  - service.yaml
+  - deployment-green.yaml    # Тема 11: тіньовий варіант, 0 реплік за замовчуванням
+  - service.yaml             # перемикач трафіку (selector: variant)
+  - service-variants.yaml    # Тема 11: стабільні точки скрейпу blue/green
   - servicemonitor.yaml
   - loadgen.yaml
 
@@ -14,4 +16,4 @@ resources:
 #   kustomize edit set image ...=...:v2  (або просто правка newTag тут)
 images:
   - name: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model
-    newTag: v5
+    newTag: v6

@@ -18,6 +18,8 @@ JSON з полем input, а Alloy уже складає ці рядки в Loki
 Ендпоїнти (порт 9100): /metrics, /healthz, /simulate-drift?shift=0.8
 """
 
+import csv
+import io
 import json
 import os
 import random
@@ -30,6 +32,7 @@ from collections import Counter
 from functools import lru_cache
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
+import numpy as np
 from prometheus_client import REGISTRY, Gauge, make_wsgi_app
 from scipy.stats import chisquare, ks_2samp
 from sklearn.datasets import load_iris
@@ -40,6 +43,10 @@ from sklearn.model_selection import train_test_split
 # Налаштування
 # ─────────────────────────────────────────────────────────────
 LOKI_URL = os.getenv("LOKI_URL", "http://loki.logging.svc.cluster.local:3100")
+# ⭐ Тема 11: еталон береться з ТОГО САМОГО файла, на якому вчилась модель.
+# Порожньо = вбудований load_iris() (так було до Теми 11).
+DATASET_URI = os.getenv("DATASET_URI", "s3://datasets/iris/v2.csv")
+
 LOKI_QUERY = os.getenv("LOKI_QUERY", '{app="ml-model"} |= "predict"')
 WINDOW_MINUTES = int(os.getenv("WINDOW_MINUTES", "10"))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
@@ -79,6 +86,10 @@ DRIFT_TIMESTAMP = Gauge("drift_check_timestamp_seconds", "Unix-час остан
 PREDICTION_SHARE = Gauge("prediction_class_share", "Частка класу у передбаченнях", ["class"])
 REFERENCE_SIZE = Gauge("reference_dataset_size", "Розмір еталонного набору")
 CURRENT_SIZE = Gauge("current_window_size", "Розмір поточного вікна")
+# Звідки взявся еталон. Потрібна саме метрика, а не лише лог: якщо експортер
+# тихо впав на вбудований sklearn, усі p-value стають недостовірними, і це
+# має бути видно на дашборді, а не лише тому, хто читав логи при старті.
+REFERENCE_SOURCE = Gauge("reference_source", "Джерело еталона (1)", ["source", "uri"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -101,23 +112,71 @@ def _train_split():
     return X_train, y_train, [str(n) for n in data.target_names]
 
 
+def _reference_from_storage(uri: str):
+    """Еталон із того самого CSV, на якому вчилася модель.
+
+    🔴 НАВІЩО ЦЕ ЗʼЯВИЛОСЬ У ТЕМІ 11. Доти еталон брався з `load_iris()` — і це
+    було правильно, бо тренування брало звідти ж. Щойно тренування переїхало на
+    s3://datasets/iris/v2.csv (1500 рядків із шумом), зашитий еталон на 150
+    рядків почав описувати ІНШИЙ розподіл. KS-тест показував би дріфт на
+    спокійному трафіку — тобто експортер брехав би, і найгіршим способом:
+    правдоподібно.
+
+    ⚠️ endpoint_url передаємо ЯВНО: MLFLOW_S3_ENDPOINT_URL — змінна MLflow, а не
+    botocore. Без неї boto3 пішов би у справжній AWS S3 із ключами minioadmin.
+    """
+    import boto3  # локальний імпорт: без сховища експортер не тягне boto3 узагалі
+
+    bucket, _, key = uri.removeprefix("s3://").partition("/")
+    s3 = boto3.client("s3", endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL") or None)
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+
+    rows = list(csv.DictReader(io.StringIO(body.decode())))
+    # Той самий split, що й у train.py: еталон — це TRAIN-частина, а не весь
+    # файл. Інакше в еталон потрапили б рядки, яких модель не бачила.
+    names = sorted({r["target"] for r in rows})
+    y = [names.index(r["target"]) for r in rows]
+    idx_train, _, y_train, _ = train_test_split(
+        list(range(len(rows))), y, test_size=0.2, random_state=42, stratify=y
+    )
+    ref = {f: np.array([float(rows[i][f]) for i in idx_train]) for f in FEATURES}
+    return ref, y_train, names
+
+
 @lru_cache(maxsize=1)
 def load_reference():
-    """Еталон — з sklearn, у самому образі: нуль мережі, нуль сховища, нуль
-    креденшелів; под підіймається, навіть якщо MinIO і MLflow лежать.
+    """Еталон: спершу зі сховища, у крайньому разі — з пакета sklearn.
 
-    ponytail: якщо треба еталон із MinIO/MLflow — підмінити тіло цієї функції
-    на завантаження артефакту reference.csv (train_mlflow.py його вже логує);
-    решта коду не змінюється.
+    Фолбек лишається навмисно: под мусить піднятись, навіть коли MinIO лежить.
+    Але він ГУЧНИЙ — подія в лозі й метрика `reference_source`, — бо мовчазний
+    відкат на інші дані означав би, що дріфт рахується не проти того, на чому
+    вчилась модель.
     """
-    X_train, y_train, names = _train_split()
-    ref = {f: X_train[:, i] for i, f in enumerate(FEATURES)}
+    source = "builtin"
+    if DATASET_URI:
+        try:
+            ref, y_train, names = _reference_from_storage(DATASET_URI)
+            source = "storage"
+        except Exception as e:  # noqa: BLE001
+            print(json.dumps({"event": "reference_fallback", "uri": DATASET_URI,
+                              "error": str(e), "hint": "еталон із sklearn; запустіть make seed"},
+                             ensure_ascii=False), flush=True)
+            X_train, y_train, names = _train_split()
+            ref = {f: X_train[:, i] for i, f in enumerate(FEATURES)}
+    else:
+        X_train, y_train, names = _train_split()
+        ref = {f: X_train[:, i] for i, f in enumerate(FEATURES)}
+
     # Еталонний розподіл класів рахуємо З ДАНИХ, а не вписуємо 0.333 руками:
     # вписана константа розійдеться з реальністю, щойно хтось змінить test_size.
     counts = Counter(names[i] for i in y_train)
     total = sum(counts.values())
     ref_shares = {c: counts[c] / total for c in counts}
     REFERENCE_SIZE.set(total)
+    REFERENCE_SOURCE.labels(source=source, uri=DATASET_URI or "sklearn").set(1)
+    print(json.dumps({"event": "reference_loaded", "source": source,
+                      "uri": DATASET_URI or "sklearn:load_iris", "rows": total},
+                     ensure_ascii=False), flush=True)
     return ref, ref_shares
 
 

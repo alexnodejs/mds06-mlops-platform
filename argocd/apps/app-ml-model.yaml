@@ -53,3 +53,17 @@ spec:
       namespace: ml-demo
       jsonPointers:
         - /spec/replicas
+    # Те саме для тіньового варіанту (Тема 11): у Git він 0 реплік, а
+    # `make bluegreen-up` піднімає його на час заняття.
+    #
+    # ⚠️ Виключаємо РІВНО /spec/replicas і нічого більше. Спокуса дописати сюди
+    # /spec/selector Service — щоб перемикати трафік командою, а не комітом —
+    # це пастка: у цьому Application стоїть RespectIgnoreDifferences=true, тож
+    # поле виключилось би і з того, що ArgoCD НАДСИЛАЄ в кластер. Наслідок:
+    # `git revert` для відкату мовчки не спрацював би — посеред заняття.
+    - group: apps
+      kind: Deployment
+      name: ml-model-green
+      namespace: ml-demo
+      jsonPointers:
+        - /spec/replicas

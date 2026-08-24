@@ -91,13 +91,19 @@ for i in $(seq 1 60); do
 done
 
 echo
-echo "══ 4. Генератор трафіку ══"
+echo "══ 4. Датасети в MinIO (Тема 11) ══"
+# Бакет живе на PVC, а PVC гине разом зі стеком — тому сейдинг на КОЖНОМУ
+# підйомі, а не один раз. Генератор детермінований, повтор нічого не ламає.
+"$HERE/scripts/seed.sh" || echo "  ⚠️  датасети не залились; тренування впаде на fallback у load_iris()"
+
+echo
+echo "══ 5. Генератор трафіку ══"
 kubectl -n ml-demo scale deploy/load-generator --replicas=1 >/dev/null 2>&1 \
   && echo "  ✅ увімкнено (RPS=5, 5% битих запитів — без нього графіки порожні)" \
   || echo "  ⏭  ml-demo ще не готовий, увімкніть пізніше: make loadgen"
 
 echo
-echo "══ 5. Тренування — щоб MLflow не був порожній ══"
+echo "══ 6. Тренування — щоб MLflow не був порожній ══"
 "$HERE/scripts/train.sh" || echo "  ⚠️  тренування не пройшло; MLflow працює, але порожній"
 
 echo

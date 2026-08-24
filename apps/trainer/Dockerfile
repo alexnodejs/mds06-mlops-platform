@@ -5,7 +5,7 @@
 # ЗБІРКА — з КОРЕНЯ репозиторію (контекст мусить бачити і apps/trainer/,
 # і apps/drift-exporter/). Простіше: `make build-tools`.
 #   docker buildx build --platform linux/amd64 -f apps/trainer/Dockerfile \
-#     -t 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v2 --push .
+#     -t 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3 --push .
 #
 # --platform linux/amd64 ОБОВ'ЯЗКОВИЙ: мак розробника ARM, ноди EKS x86_64.
 # Без нього под падає з "exec format error", і виглядає це як зламаний образ.
@@ -41,7 +41,7 @@ COPY apps/trainer/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # apps/drift-exporter/requirements.txt тут НЕ потрібен: строга підмножина.
-COPY apps/trainer/train.py apps/trainer/promote.py \
+COPY apps/trainer/train.py apps/trainer/promote.py apps/trainer/seed_datasets.py \
      apps/drift-exporter/drift_exporter.py apps/drift-exporter/test_drift.py ./
 
 EXPOSE 9100

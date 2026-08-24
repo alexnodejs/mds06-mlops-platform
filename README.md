@@ -27,6 +27,7 @@
 | **8** | Моніторинг ML-моделі | Prometheus, Grafana, Loki, модель | `make up` | [docs/08](docs/08-monitoring.md) |
 | **9** | MLflow, реєстр моделей, дріфт | MLflow, MinIO, PostgreSQL, дріфт-експортер | `make up` | [docs/09](docs/09-mlflow-drift.md) |
 | **10** | Автоматизоване тренування | Step Functions, Lambda, GitHub OIDC | `make pipeline-up` | [docs/10](docs/10-automated-training.md) |
+| **11** | Управління моделями: реєстр, дані, blue-green | датасети в MinIO, теги версій, тіньовий варіант | `make seed` | [docs/11](docs/11-model-registry.md) |
 
 Теми 8 і 9 піднімаються однією командою `make up`, бо це один стек: модель без
 моніторингу нецікава, а моніторинг без моделі нічого не показує.
@@ -66,6 +67,7 @@ make pipeline-up     # Тема 10:  Step Functions + Lambda + OIDC, ~1 хв
 | `k8s/` | Маніфести, які синхронізує ArgoCD. Одна тека — один Application |
 | `argocd/` | `root.yaml` (app-of-apps) і `apps/` з дочірніми Application |
 | `lambdas/` | Три Lambda Теми 10: `validate`, `evaluate`, `log_metrics` |
+| `k8s/trainer/` | Job-и, які запускають ПОДІЄЮ, а не GitOps: тренування, сейдинг даних, промоція |
 | `scripts/` | Те, що викликає Makefile. Читати не обовʼязково, але корисно |
 | `docs/` | Гайди по темах, вправи, розбір типових помилок |
 

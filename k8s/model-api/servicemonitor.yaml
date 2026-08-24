@@ -17,8 +17,30 @@ metadata:
     app: ml-model
     release: monitoring
 spec:
+  # ⚠️ ПАСТКА №3 (Тема 11) — найтихіша з трьох.
+  # Без jobLabel лейбл `job` береться з ІМЕНІ Service. Скрейпляться тепер
+  # ml-model-blue і ml-model-green, тож `job` став би "ml-model-blue" /
+  # "ml-model-green", і всі наявні запити з job="ml-model" мовчки перестали б
+  # знаходити дані: панелі не впали б з помилкою, а просто спорожніли.
+  # jobLabel: app бере значення лейбла `app` Service — в обох variant-Service
+  # він однаковий, `ml-model`. Тобто job лишається таким самим, як у Темі 8.
+  jobLabel: app
+
+  # ⭐ Тема 11: лейбл ПОДА `variant` переноситься на КОЖНУ метрику цього пода.
+  # Саме тому app.py чіпати не довелось: сервіс про варіанти не знає нічого, а
+  # в Grafana blue і green розділяються через `by (variant)`.
+  # Оператор рендерить із цього relabel-правило з regex (.+), тож под без
+  # лейбла (наприклад, старий под під час rolling update) просто лишається
+  # без `variant`, а не ламає запит.
+  podTargetLabels:
+    - variant
+
   selector:
     matchLabels:
+      # Знаходить ml-model-blue і ml-model-green — у них цей лейбл є. Але НЕ
+      # бойовий Service ml-model: у нього тепер `role: router`. Інакше поди
+      # активного варіанту скрейпились би ДВІЧІ, і графіки показували б
+      # подвійний трафік.
       app: ml-model
   namespaceSelector:
     matchNames: [ml-demo]

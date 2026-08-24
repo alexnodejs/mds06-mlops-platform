@@ -51,8 +51,8 @@ curl -s localhost:8000/metrics | grep predict_
 Штатний шлях — з кореня репозиторію, разом з іншими двома образами курсу:
 
 ```bash
-make images        # login у ECR + збірка mds06-ml-model:v5,
-                   # mds06-mlflow-tools:v2, mds06-react-gitops:v2
+make images        # login у ECR + збірка mds06-ml-model:v6,
+                   # mds06-mlflow-tools:v3, mds06-react-gitops:v2
 ```
 
 Усередині (`scripts/build-images.sh`) для цього сервісу виконується:
@@ -60,7 +60,7 @@ make images        # login у ECR + збірка mds06-ml-model:v5,
 ```bash
 docker buildx build --platform linux/amd64 \
   -f apps/model-api/Dockerfile \
-  -t $REGISTRY/mds06-ml-model:v5 --push apps/model-api
+  -t $REGISTRY/mds06-ml-model:v6 --push apps/model-api
 ```
 
 `--platform linux/amd64` **обовʼязковий**: мак розробника ARM, ноди EKS x86_64.
@@ -73,7 +73,7 @@ docker buildx build --platform linux/amd64 \
 
 ```bash
 ECR=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-central-1.amazonaws.com
-docker run --rm -p 8000:8000 --platform linux/amd64 $ECR/mds06-ml-model:v5
+docker run --rm -p 8000:8000 --platform linux/amd64 $ECR/mds06-ml-model:v6
 ```
 
 Розмір образу ~414 MiB на диску / ~133 MB на pull. З них 62% — ML-стек

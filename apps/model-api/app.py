@@ -116,6 +116,18 @@ def _fetch_from_registry(current_version=None):
                 "run_id": mv.run_id[:8]}
     except Exception:  # noqa: BLE001 — метадані приємні, але не критичні
         pass
+
+    # ⭐ ТЕМА 11: теги й опис версії. Доти сервіс читав лише номер версії — і на
+    # питання слайда 7 «на яких даних працює те, що зараз обслуговує клієнтів»
+    # відповіді не існувало ніде, крім голови того, хто запускав тренування.
+    #
+    # Теги живуть на ВЕРСІЇ, а не на запуску: запусків у сітці шість, у прод
+    # їде один. Тому це окреме читання, а не поле з run.data.
+    meta["tags"] = dict(getattr(mv, "tags", {}) or {})
+    meta["description"] = (getattr(mv, "description", "") or "").strip()
+    # Аліаси показують, ЯКУ РОЛЬ ця версія грає зараз: champion, challenger,
+    # previous. Одна версія може мати кілька — і це нормально.
+    meta["aliases"] = list(getattr(mv, "aliases", []) or [])
     return model, classes, str(mv.version), type(model).__name__, meta
 
 
@@ -381,6 +393,14 @@ def predict(features: IrisFeatures):
         prediction=predicted_class,
         confidence=round(confidence, 4),
         inference_ms=round(inference * 1000, 2),
+        # ⭐ ТЕМА 11: яка саме версія моделі дала цю відповідь.
+        # Доти в логу цього не було, і наслідок був неочевидний: дріфт-експортер
+        # читає з Loki рівно ці рядки, тож ФІЗИЧНО не міг відрізнити прогнози
+        # champion від challenger. Після blue-green у стрімі опиняються обидві
+        # моделі, і без цього поля хі-квадрат по класах змішував би їх у кашу.
+        # У тілі логу, а не в лейблі Loki: версій з часом стають десятки, а
+        # лейбл — це окремий стрім на кожне значення.
+        model_version=state["version"],
     )
 
     return {
@@ -437,6 +457,44 @@ def _metrics_label():
     return (", " + ", ".join(bits)) if bits else ""
 
 
+def _lineage_rows():
+    """Рядки таблиці «звідки взялась ця модель» — теги версії з реєстру.
+
+    ТЕМА 11, СЛАЙД 16. Доти сторінка показувала лише метрики, тобто відповідала
+    на питання «наскільки вона добра», але не на «звідки вона взялась». Теги
+    ставить train.py при реєстрації; якщо їх немає (модель зашита в образ або
+    натренована до Теми 11) — блок просто не малюється.
+    """
+    tags = (STATE.get("meta") or {}).get("tags") or {}
+    if not tags:
+        return ""
+
+    human = {
+        "dataset": "дані",
+        "dataset_digest": "хеш даних",
+        "git_sha": "коміт",
+        "trained_by": "хто тренував",
+        "status": "статус",
+    }
+    rows = []
+    for key, label in human.items():
+        value = tags.get(key)
+        if not value or value == "unknown":
+            continue
+        # Коміт скорочуємо: 40 символів у таблиці нечитабельні, а 12 однозначні.
+        if key == "git_sha":
+            value = value[:12]
+        rows.append(f"<tr><td class='k'>{label}</td><td><code>{value}</code></td></tr>")
+
+    aliases = (STATE.get("meta") or {}).get("aliases") or []
+    if aliases:
+        rows.append("<tr><td class='k'>аліаси</td><td>"
+                    + " ".join(f"<code>@{a}</code>" for a in aliases) + "</td></tr>")
+    if not rows:
+        return ""
+    return ("<h2>Звідки взялась ця модель</h2><table>" + "".join(rows) + "</table>")
+
+
 @app.get("/", response_class=HTMLResponse)
 
 def index():
@@ -448,11 +506,16 @@ def index():
 code{{background:#f4f4f5;padding:.1rem .3rem;border-radius:.2rem}}
 .badge{{font-size:1.05rem}}
 .badge b{{background:#e8f0fe;color:#1a4b8c;padding:.15rem .5rem;border-radius:.3rem}}
-.dim{{color:#8a8a94;font-size:.85rem}}</style>
+.dim{{color:#8a8a94;font-size:.85rem}}
+h2{{font-size:1.05rem;margin:1.6rem 0 .4rem}}
+table{{border-collapse:collapse;font-size:.9rem}}
+td{{padding:.15rem .8rem .15rem 0;vertical-align:top}}
+td.k{{color:#8a8a94;white-space:nowrap}}</style>
 <h1>ML-сервіс Iris</h1>
 <p class="badge">модель <b>{_model_label()}</b> · джерело: {_source_label()}</p>
 <p>{STATE["model_type"]}, sklearn {BUNDLE["sklearn_version"]}{_metrics_label()}</p>
 <p class="dim">образ сервісу: {APP_VERSION}</p>
+{_lineage_rows()}
 <ul>
   <li><code>POST /predict</code> — передбачення, приклад нижче</li>
   <li><a href="/healthz"><code>GET /healthz</code></a> — перевірка живості</li>

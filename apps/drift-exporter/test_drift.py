@@ -14,7 +14,13 @@ import os
 import random
 import urllib.request
 
-from prometheus_client import REGISTRY
+# ⚠️ ДО імпорту drift_exporter: DATASET_URI читається на рівні модуля, і з
+# непорожнім значенням load_reference() пішов би в MinIO, якого в тесті немає.
+# Порожнє значення = вбудований load_iris(), тобто той самий еталон, на якому
+# зміряні всі числа нижче. Самоперевірка мусить лишатись offline.
+os.environ["DATASET_URI"] = ""
+
+from prometheus_client import REGISTRY  # noqa: E402
 
 from drift_exporter import (
     FEATURES,

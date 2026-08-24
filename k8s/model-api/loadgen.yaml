@@ -1,5 +1,5 @@
 # Генератор навантаження: без нього ВСІ шість панелей слайда 37 порожні.
-# Той самий образ ml-model:v5, лише інший command — образ уже витягнутий на
+# Той самий образ ml-model:v6, лише інший command — образ уже витягнутий на
 # ноду, тож под стартує миттєво і другий ECR-репозиторій не потрібен.
 # Тег ТУТ мусить збігатися з newTag у kustomization.yaml: kustomize його все
 # одно перепише, але `kubectl apply -f k8s/model-api/loadgen.yaml` (Тема 9) йде повз
@@ -44,6 +44,11 @@ data:
 
     URL = os.getenv("TARGET_URL", "http://ml-model.ml-demo.svc.cluster.local/predict")
     RPS = float(os.getenv("RPS", "5"))
+    # ⭐ ТІНЬОВИЙ ТРАФІК (Тема 11, blue-green). Порожньо = вимкнено.
+    # Той САМИЙ payload летить у другий варіант, тож різниця в передбаченнях і
+    # впевненості — це різниця МОДЕЛЕЙ, а не наслідок різних вхідних квітів.
+    # Другий генератор коштував би ще один под; ця змінна — нуль подів.
+    SHADOW_URL = os.getenv("SHADOW_URL", "")
     JITTER = float(os.getenv("JITTER", "0.25"))
 
     # ⭐ РУЧКА ДЛЯ ДЕМО ДРІФТУ (Тема 9).
@@ -89,10 +94,9 @@ data:
     # навіть з кодом 0 — kubelet перезапустить контейнер, і под піде в
     # CrashLoopBackOff з причиною "Completed". Саме так і сталося, коли цей
     # цикл випадково зник під час правки.
-    while True:
+    def send(url, body):
         req = urllib.request.Request(
-            URL, data=json.dumps(payload()).encode(),
-            headers={"Content-Type": "application/json"})
+            url, data=body, headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 resp.read()
@@ -100,6 +104,13 @@ data:
             e.read()  # 422/5xx — очікувано, метрику вже порахував сам сервіс
         except Exception as e:
             print("помилка запиту:", e, flush=True)
+
+    while True:
+        # ОДИН payload на обидва варіанти — див. коментар до SHADOW_URL.
+        body = json.dumps(payload()).encode()
+        send(URL, body)
+        if SHADOW_URL:
+            send(SHADOW_URL, body)
         time.sleep(1.0 / RPS)
 ---
 apiVersion: apps/v1
@@ -127,7 +138,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: loadgen
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v5
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v6
           imagePullPolicy: IfNotPresent
           command: ["python", "/scripts/loadgen.py"]
           env:

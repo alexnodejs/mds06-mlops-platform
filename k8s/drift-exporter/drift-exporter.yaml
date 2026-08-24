@@ -53,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: drift-exporter
-          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v2
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v3
           # Always, а не IfNotPresent (граблі №6 попередніх тем): з кешем ноди
           # ви годину дебажите код, який давно виправили.
           imagePullPolicy: Always
@@ -63,16 +63,31 @@ spec:
             # ІМ'Я порту обов'язкове: на нього посилається ServiceMonitor.
             - name: http
               containerPort: 9100
-          # КРЕДЕНШЕЛИ ТУТ НЕ ПОТРІБНІ ВЗАГАЛІ — і це не забудькуватість.
-          # Еталон експортер бере з load_iris() у самому образі (ті самі
-          # 120 рядків train-split, на яких вчилася модель Теми 8), поточне
-          # вікно — з Loki, стан — у Gauge в пам'яті. Ні MinIO, ні MLflow,
-          # ні PostgreSQL: под підніметься, навіть якщо весь стек лежить.
+          # ДО ТЕМИ 11 креденшелів тут не було взагалі: еталон брався з
+          # load_iris() у самому образі. Тема 11 перенесла дані в сховище, і
+          # тепер еталон читається звідти — інакше він описував би інший
+          # розподіл, ніж той, на якому вчилась модель, і KS-тест показував би
+          # дріфт на спокійному трафіку.
+          #
+          # ⚠️ optional: true СВІДОМО. Секрет живе в namespace mlflow разом із
+          # експортером, але якщо його чомусь немає — под мусить піднятись і
+          # працювати на вбудованому еталоні, а не впасти в
+          # CreateContainerConfigError. Фолбек гучний: подія reference_fallback
+          # у лозі й метрика reference_source{source="builtin"}.
+          envFrom:
+            - secretRef:
+                name: mlflow-credentials
+                optional: true
           env:
             # Без цього Python буферизує stdout блоками по 4-8 КБ і логи
             # прилітають ривками, а останній буфер при падінні пода губиться.
             - name: PYTHONUNBUFFERED
               value: "1"
+            # ⭐ Тема 11: еталон береться з того самого CSV, на якому вчилась
+            # модель. Порожнє значення повернуло б поведінку до Теми 9
+            # (вбудований load_iris) — і еталон розійшовся б із тренуванням.
+            - name: DATASET_URI
+              value: s3://datasets/iris/v2.csv
             # Loki живе в іншому namespace — ходимо повним FQDN.
             - name: LOKI_URL
               value: http://loki.logging.svc.cluster.local:3100

@@ -15,7 +15,7 @@ REGISTRY = $(ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
 
 .DEFAULT_GOAL := help
 .PHONY: help init cluster-up cluster-down images login up down ports status train \
-        loadgen pipeline-up pipeline-run pipeline-down clean
+        loadgen seed rollback bluegreen bluegreen-up bluegreen-down pipeline-up pipeline-run pipeline-down clean
 
 help: ## показати цю довідку
 	@echo ""
@@ -71,6 +71,21 @@ status: ## що зараз працює в кластері
 
 loadgen: ## увімкнути генератор трафіку (без нього графіки порожні)
 	kubectl -n ml-demo scale deploy/load-generator --replicas=1
+
+seed: ## Тема 11: покласти датасети (v1/v2/v3) у MinIO
+	@bash scripts/seed.sh
+
+rollback: ## Тема 11: відкотити модель на попередню версію [VERSION=N]
+	@bash scripts/rollback.sh
+
+bluegreen: ## Тема 11: показати стан blue/green (куди йде трафік, які моделі)
+	@bash scripts/bluegreen.sh status
+
+bluegreen-up: ## Тема 11: підняти green + увімкнути тіньовий трафік
+	@bash scripts/bluegreen.sh up
+
+bluegreen-down: ## Тема 11: прибрати green і вимкнути тінь
+	@bash scripts/bluegreen.sh down
 
 train: ## тренування вручну: make train [N=50,100 D=2,none]
 	@bash scripts/train.sh

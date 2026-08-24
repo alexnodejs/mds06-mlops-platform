@@ -1,0 +1,47 @@
+# Job, який перевішує аліас моделі. Тема 11.
+#
+# Використовується `make rollback` і вручну, коли треба призначити @champion
+# або @challenger без повного прогону пайплайну.
+#
+# Той самий promote.py, що викликає крок PromoteModel у Step Functions
+# (terraform/training-pipeline/state_machine.asl.json). Тобто відкат і промоція
+# — це БУКВАЛЬНО одна операція, лише з іншим номером версії. Окремого механізму
+# відкату не існує, і це не спрощення, а правильна модель: якщо відкат іде
+# іншим шляхом, ніж викочування, він і ламається окремо.
+#
+# ⚠️ ArgoCD цей файл НЕ синкає — для нього немає Application.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: mlflow
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: promote
+          image: ${TRAINER_IMAGE}
+          command: ["python", "promote.py"]
+          envFrom:
+            - secretRef:
+                name: mlflow-credentials
+          env:
+            # ⚠️ Порт 80, а не 5000: Service mlflow слухає 80 і проксює на 5000.
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.mlflow.svc.cluster.local:80
+            - name: MODEL_VERSION
+              value: "${MODEL_VERSION}"
+            # ⚠️ Без значення за замовчуванням: envsubst НЕ розуміє синтаксис
+            # ${VAR:-default} і лишив би цей рядок у маніфесті буквально.
+            # Дефолт задає scripts/rollback.sh при export.
+            - name: MODEL_ALIAS
+              value: "${MODEL_ALIAS}"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

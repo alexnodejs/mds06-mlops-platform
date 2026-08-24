@@ -49,6 +49,26 @@ def main() -> int:
     log(event="alias_moved", model=MODEL_NAME, alias=ALIAS,
         version=VERSION, previous=previous)
 
+    # ⭐ ТЕМА 11, СЛАЙД 14: «швидко повертатись до стабільної».
+    # Попередній чемпіон отримує аліас @previous — і відкат перестає бути
+    # пошуком номера в UI, а стає однією командою `make rollback`.
+    #
+    # Це робимо ТІЛЬКИ для champion: у challenger попередника зберігати немає
+    # сенсу, кандидатів перезаписують постійно.
+    if previous and previous != VERSION and ALIAS == "champion":
+        client.set_registered_model_alias(MODEL_NAME, "previous", previous)
+        # Слайд 15, Archived: версія більше не обслуговує запити, але лишається
+        # в реєстрі — саме тому це тег, а не видалення.
+        client.set_model_version_tag(MODEL_NAME, previous, "status", "archived")
+        log(event="previous_archived", model=MODEL_NAME, version=previous,
+            hint="відкотитись: make rollback")
+
+    # Статус нової версії. Аліас каже «де вона працює», тег — «в якому вона
+    # стані». Слайди 14-15 говорять саме про стан, тож тримаємо обидва.
+    client.set_model_version_tag(
+        MODEL_NAME, VERSION,
+        "status", "production" if ALIAS == "champion" else "staging")
+
     # Сервіс моделі однаково підхопить нову версію сам протягом
     # MODEL_RELOAD_SECONDS. /reload — щоб на занятті не чекати.
     # Помилка тут НЕ валить промоцію: аліас уже переставлено, і це головне.
