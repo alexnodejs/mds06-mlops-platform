@@ -176,6 +176,15 @@ spec:
           image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-ml-model:v6
           imagePullPolicy: IfNotPresent
           command: ["python", "/scripts/loadgen.py"]
+          # Тема 11: генератор читає ТОЙ САМИЙ датасет, що й тренування з
+          # еталоном дріфту. Без креденшелів він тихо падає на load_iris(), і
+          # KS-тест починає показувати дріфт на спокійному трафіку — бо еталон
+          # і трафік описують різні розподіли. optional: true, бо под мусить
+          # працювати й без сховища (фолбек гучний, у логах).
+          envFrom:
+            - secretRef:
+                name: mlflow-credentials
+                optional: true
           env:
             - name: PYTHONUNBUFFERED
               value: "1"
@@ -183,6 +192,8 @@ spec:
               value: http://ml-model.ml-demo.svc.cluster.local/predict
             - name: RPS
               value: "5"
+            - name: DATASET_URI
+              value: s3://datasets/iris/v2.csv
           volumeMounts:
             - name: script
               mountPath: /scripts
