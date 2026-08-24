@@ -144,7 +144,31 @@ aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --o
 
 ---
 
-## 8. Тунель мовчки не встає на портах 5000 і 7000
+## 8. Еталон і поточні дані з різних джерел = вигаданий дріфт
+
+Найкоротший спосіб отримати правдоподібну брехню на дашборді. Дріфт-монітор
+порівнює два розподіли; якщо вони приходять із різних джерел, він чесно покаже
+різницю — але це буде різниця **джерел**, а не дріфт даних.
+
+Реальний випадок із Теми 11: тренування й еталон переїхали на
+`s3://datasets/iris/v2.csv`, а генератор трафіку лишився на `load_iris()`.
+Результат — `drift_detected{feature="petal_length"} = 1` одразу після підйому
+стека, без жодної симуляції.
+
+```bash
+curl -s localhost:9101/metrics | grep -E "reference_source|drift_p_value"
+```
+
+`reference_source{source="builtin"}` замість `storage` означає, що експортер не
+дістав датасет і тихо взяв вбудований — усі p-value після цього недостовірні.
+
+Друга половина тієї ж пастки: **джитер генератора треба калібрувати під
+еталон**. `JITTER=0.25` було правильним для еталона з 120 рядків і стало
+надлишковим для 1200 — KS почав ловити сам джитер.
+
+---
+
+## 9. Тунель мовчки не встає на портах 5000 і 7000
 
 На macOS ці порти тримає **AirPlay Receiver**. `kubectl port-forward` не
 скаржиться, а `curl` отримує 403 від AirTunes — і виглядає це як зламаний сервіс
@@ -163,6 +187,7 @@ aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --o
 | 8 — Prometheus, Grafana, Loki | [08-monitoring.md](08-monitoring.md#-дефекти-які-знайшло-тільки-живе-розгортання) |
 | 9 — MLflow, MinIO, дріфт | [09-mlflow-drift.md](09-mlflow-drift.md#пастки-які-варто-знати-до-того-як-наткнетесь) |
 | 10 — Step Functions, Lambda, OIDC | [10-automated-training.md § 10](10-automated-training.md#10-типові-помилки) |
+| 11 — реєстр, дані, blue-green | [11-model-registry.md § 12](11-model-registry.md#12-типові-помилки) |
 
 ---
 
