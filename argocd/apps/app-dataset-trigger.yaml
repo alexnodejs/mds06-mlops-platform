@@ -1,13 +1,16 @@
-# Приймач подій сховища (Тема 11).
+# Узгоджувач даних (Тема 11): стежить, чи не розійшлись дані з моделлю.
 #
 # ⚠️ ХВИЛЯ -1, тобто РАНІШЕ за MinIO (хвиля 0). MinIO перевіряє доступність цілі
 # сповіщень при старті: якщо ендпоінт не відповідає, ціль позначається
-# офлайновою, і подія про заливку файла нікуди не піде — мовчки. Приймач мусить
+# офлайновою, і подія про заливку нікуди не піде — мовчки. Узгоджувач мусить
 # уже слухати, коли MinIO піднімається.
+#
+# ⚠️ Але навіть якщо ця умова порушиться, тренування НЕ загубиться: подія лише
+# прискорює цикл, а сам цикл іде за таймером кожні 5 хвилин.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: dataset-webhook
+  name: dataset-trigger
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
@@ -18,7 +21,7 @@ spec:
   source:
     repoURL: https://github.com/alexnodejs/mds06-mlops-platform.git
     targetRevision: HEAD
-    path: k8s/dataset-webhook
+    path: k8s/dataset-trigger
   destination:
     server: https://kubernetes.default.svc
     namespace: mlflow

@@ -1,0 +1,145 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  УЗГОДЖУВАЧ ДАНИХ — «дані розійшлись із моделлю → тренування» (Тема 11).
+#
+#  Level-triggered, а не edge-triggered. Питання не «чи щось сталось», а
+#  «чи розійшлись дані з моделлю»:
+#
+#      digest файла в сховищі  vs  тег dataset_digest чинного @champion
+#              різні   →  тренуємо
+#              однакові →  нічого не робимо
+#
+#  Подія MinIO (POST /) лише БУДИТЬ цикл — рівно як webhook у ArgoCD лише
+#  прискорює опитування Git, не замінюючи його. Рішення завжди ухвалює
+#  порівняння стану, тому подія не може ні продублювати тренування, ні
+#  запустити його на незмінних даних.
+#
+#  ЩО ЦЕ ПОЛАГОДИЛО (усе зміряно на живих прогонах попередньої, подієвої версії):
+#    • три файли давали ТРИ одночасні тренування — тепер одне порівняння;
+#    • перезалив ідентичного вмісту запускав тренування — тепер ні;
+#    • загублена подія означала пропущене тренування назавжди — тепер
+#      наступний цикл усе одно побачить розбіжність;
+#    • три паралельні прогони поклали CoreDNS — тепер є захист від паралелі.
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataset-reconciler
+  namespace: mlflow
+  labels:
+    app: dataset-reconciler
+spec:
+  replicas: 1
+  # Recreate, а не RollingUpdate: два узгоджувачі одночасно могли б запустити
+  # два тренування, поки перевірка «чи вже біжить» ще не бачить чужого прогону.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dataset-reconciler
+  template:
+    metadata:
+      labels:
+        app: dataset-reconciler
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconciler
+          # Образ тренера: у ньому вже є mlflow (читати теги моделі), boto3
+          # (читати файл зі сховища) і prometheus-client (метрики).
+          image: 832828869208.dkr.ecr.eu-central-1.amazonaws.com/mds06-mlflow-tools:v6
+          command: ["python", "reconciler.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # AWS_* і MLFLOW_S3_ENDPOINT_URL — доступ до сховища.
+            - secretRef:
+                name: mlflow-credentials
+                optional: true
+            # WEBHOOK_TOKEN і GITHUB_TOKEN. Без GITHUB_TOKEN узгоджувач працює
+            # в режимі would_trigger: усе рахує й логує, але нікого не смикає.
+            - secretRef:
+                name: dataset-webhook
+                optional: true
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            # ⚠️ Порт 80, а не 5000: Service mlflow слухає 80.
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.mlflow.svc.cluster.local:80
+            # Файл, за яким стежимо. Це ТОЙ САМИЙ файл, на якому вчиться прод
+            # (k8s/trainer/job.yaml) і проти якого рахує дріфт експортер.
+            - name: DATASET_URI
+              value: s3://datasets/iris/v2.csv
+            # 300 c — той самий порядок, що дефолтний resync ArgoCD (180 c).
+            - name: RESYNC_SECONDS
+              value: "300"
+            - name: GITHUB_REPO
+              value: alexnodejs/mds06-mlops-platform
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            # mlflow + boto3 імпортуються ~3-5 с.
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            # Прокидається раз на 5 хвилин і читає 42 KiB. Пам'ять тримають
+            # імпорти mlflow + boto3 (~150 MiB), а не робота.
+            requests: { cpu: 20m, memory: 192Mi }
+            limits: { memory: 320Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dataset-webhook
+  namespace: mlflow
+  labels:
+    # ⚠️ Імʼя Service лишається dataset-webhook: на нього посилається
+    # MINIO_NOTIFY_WEBHOOK_ENDPOINT_DATASETS у argocd/apps/app-minio.yaml.
+    # Перейменування Service означало б перезапуск MinIO — зайвий ризик заради
+    # косметики. Deployment при цьому зветься за суттю: dataset-reconciler.
+    app: dataset-reconciler
+spec:
+  type: ClusterIP
+  selector:
+    app: dataset-reconciler
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Метрики узгоджувача в Prometheus: скільки циклів, скільки запусків, і чи
+# зараз дані розійшлись із моделлю. Без цього «нічого не сталось» і «зламалось
+# і мовчить» виглядають однаково.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dataset-reconciler
+  namespace: mlflow
+  labels:
+    app: dataset-reconciler
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: dataset-reconciler
+  namespaceSelector:
+    matchNames: [mlflow]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 60s

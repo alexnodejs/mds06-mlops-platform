@@ -26,7 +26,7 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   registry   = "${local.account_id}.dkr.ecr.${var.region}.amazonaws.com"
 
-  trainer_image = var.trainer_image != "" ? var.trainer_image : "${local.registry}/mds06-mlflow-tools:v5"
+  trainer_image = var.trainer_image != "" ? var.trainer_image : "${local.registry}/mds06-mlflow-tools:v6"
 
   # Імʼя state machine потрібне ДО її створення: політика ролі GitHub Actions
   # посилається на цей ARN, а посилання на aws_sfn_state_machine.this.arn
