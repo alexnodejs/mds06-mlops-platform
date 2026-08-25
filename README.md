@@ -28,6 +28,7 @@
 | **9** | MLflow, реєстр моделей, дріфт | MLflow, MinIO, PostgreSQL, дріфт-експортер | `make up` | [docs/09](docs/09-mlflow-drift.md) |
 | **10** | Автоматизоване тренування | Step Functions, Lambda, GitHub OIDC | `make pipeline-up` | [docs/10](docs/10-automated-training.md) |
 | **11** | Управління моделями: реєстр, дані, blue-green | датасети в MinIO, теги версій, тіньовий варіант | `make seed` | [docs/11](docs/11-model-registry.md) |
+| | ↳ сценарій демо Blue-Green | | `make bluegreen-up` | [docs/11-demo](docs/11-blue-green-demo.md) |
 
 Теми 8 і 9 піднімаються однією командою `make up`, бо це один стек: модель без
 моніторингу нецікава, а моніторинг без моделі нічого не показує.

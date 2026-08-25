@@ -389,6 +389,10 @@ model = mlflow.sklearn.load_model(f"models:/{MODEL_NAME}@{MODEL_ALIAS}")
 
 ## 8. Blue-Green (слайд 35)
 
+> 📋 **Покроковий сценарій заняття зі зміряними числами —
+> [11-blue-green-demo.md](11-blue-green-demo.md).** Тримайте його на другому
+> екрані; тут — розбір, чому воно влаштоване саме так.
+
 ### Як це влаштовано
 
 ```
