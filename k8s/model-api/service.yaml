@@ -31,7 +31,7 @@ spec:
     # Перемикати ТРЕБА комітом у Git, а не `kubectl patch`: ArgoCD із selfHeal
     # відкотить ручну правку за кілька секунд. Це не незручність, а найкоротша
     # демонстрація GitOps у курсі — див. docs/11-model-registry.md.
-    variant: green
+    variant: blue
   ports:
     - name: http
       port: 80
