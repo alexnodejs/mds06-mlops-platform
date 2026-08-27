@@ -6,7 +6,7 @@
     <mxCell id="t1" value="MLOps-стек у Kubernetes" style="text;html=1;fontSize=24;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
       <mxGeometry x="40" y="26" width="520" height="30" as="geometry"/>
     </mxCell>
-    <mxCell id="t2" value="Теми 5–10 · EKS · GitOps · спостережуваність · автоматизоване тренування" style="text;html=1;fontSize=13;align=left;verticalAlign=middle;fontColor=#7A7A8C;" vertex="1" parent="1">
+    <mxCell id="t2" value="Теми 5–11 · EKS · GitOps · спостережуваність · автоматизоване тренування · реєстр моделей" style="text;html=1;fontSize=13;align=left;verticalAlign=middle;fontColor=#7A7A8C;" vertex="1" parent="1">
       <mxGeometry x="40" y="54" width="700" height="20" as="geometry"/>
     </mxCell>
 
@@ -17,7 +17,7 @@
     <mxCell id="gh" value="GitHub" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#F4F4F6;strokeColor=#8C8C9A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
       <mxGeometry x="40" y="205" width="200" height="152" as="geometry"/>
     </mxCell>
-    <mxCell id="g1" value="mds06-mlops-platform&#10;один репозиторій на Теми 5–10" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B5B5C0;fontSize=10;" vertex="1" parent="gh">
+    <mxCell id="g1" value="mds06-mlops-platform&#10;один репозиторій на Теми 5–11" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B5B5C0;fontSize=10;" vertex="1" parent="gh">
       <mxGeometry x="14" y="38" width="172" height="42" as="geometry"/>
     </mxCell>
     <mxCell id="gha" value="GitHub Actions&#10;push у main → тренування" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00838F;fontSize=10;" vertex="1" parent="gh">
@@ -25,7 +25,7 @@
     </mxCell>
 
     <mxCell id="leg" value="Потоки" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#FFFFFF;strokeColor=#B5B5C0;fontSize=11;fontStyle=1;" vertex="1" parent="1">
-      <mxGeometry x="40" y="395" width="200" height="176" as="geometry"/>
+      <mxGeometry x="40" y="395" width="200" height="202" as="geometry"/>
     </mxCell>
     <mxCell id="l1" value="GitOps · pull" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;" vertex="1" parent="leg">
       <mxGeometry x="52" y="34" width="120" height="18" as="geometry"/>
@@ -56,6 +56,12 @@
     </mxCell>
     <mxCell id="l5l" value="" style="endArrow=none;html=1;strokeColor=#00838F;strokeWidth=3;" edge="1" parent="leg">
       <mxGeometry relative="1" as="geometry"><mxPoint x="14" y="147" as="sourcePoint"/><mxPoint x="46" y="147" as="targetPoint"/></mxGeometry>
+    </mxCell>
+    <mxCell id="l6" value="Дані → тренування · Тема 11" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;" vertex="1" parent="leg">
+      <mxGeometry x="52" y="164" width="140" height="18" as="geometry"/>
+    </mxCell>
+    <mxCell id="l6l" value="" style="endArrow=none;html=1;strokeColor=#C2185B;strokeWidth=3;" edge="1" parent="leg">
+      <mxGeometry relative="1" as="geometry"><mxPoint x="14" y="173" as="sourcePoint"/><mxPoint x="46" y="173" as="targetPoint"/></mxGeometry>
     </mxCell>
 
     <mxCell id="aws" value="AWS · eu-central-1" style="swimlane;whiteSpace=wrap;html=1;startSize=30;fillColor=none;strokeColor=#FF9900;strokeWidth=2;fontSize=13;fontStyle=1;fontColor=#D68910;dashed=1;" vertex="1" parent="1">
@@ -89,18 +95,24 @@
     <mxCell id="argo" value="ArgoCD · prune · selfHeal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;" vertex="1" parent="nargo">
       <mxGeometry x="18" y="32" width="214" height="38" as="geometry"/>
     </mxCell>
-    <mxCell id="root" value="root Application · app-of-apps&#10;тягне решту 10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9673A6;fontSize=10;dashed=1;" vertex="1" parent="nargo">
+    <mxCell id="root" value="root Application · app-of-apps&#10;тягне решту 11" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9673A6;fontSize=10;dashed=1;" vertex="1" parent="nargo">
       <mxGeometry x="18" y="76" width="214" height="38" as="geometry"/>
     </mxCell>
 
     <mxCell id="nml" value="ml-demo" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=none;strokeColor=#6C8EBF;dashed=1;fontSize=10;fontColor=#6C8EBF;" vertex="1" parent="cl">
-      <mxGeometry x="25" y="170" width="250" height="170" as="geometry"/>
+      <mxGeometry x="25" y="170" width="250" height="250" as="geometry"/>
     </mxCell>
-    <mxCell id="mlm" value="ml-model × 2&#10;FastAPI · Iris" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="nml">
-      <mxGeometry x="18" y="36" width="214" height="56" as="geometry"/>
+    <mxCell id="svc" value="Service ml-model&#10;selector: variant ← ПЕРЕМИКАЧ" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=10;fontStyle=1;" vertex="1" parent="nml">
+      <mxGeometry x="18" y="32" width="214" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="mlm" value="ml-model × 2 · variant=blue&#10;@champion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="nml">
+      <mxGeometry x="18" y="80" width="214" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="green" value="ml-model-green · 0 реплік&#10;@challenger" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;dashed=1;" vertex="1" parent="nml">
+      <mxGeometry x="18" y="134" width="214" height="46" as="geometry"/>
     </mxCell>
     <mxCell id="lg" value="load-generator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F4F6;strokeColor=#A0A0AE;fontSize=10;" vertex="1" parent="nml">
-      <mxGeometry x="18" y="104" width="214" height="42" as="geometry"/>
+      <mxGeometry x="18" y="194" width="214" height="42" as="geometry"/>
     </mxCell>
 
     <mxCell id="nmon" value="monitoring" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=none;strokeColor=#D79B00;dashed=1;fontSize=10;fontColor=#D79B00;" vertex="1" parent="cl">
@@ -114,7 +126,7 @@
     </mxCell>
 
     <mxCell id="nlog" value="logging" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=none;strokeColor=#82B366;dashed=1;fontSize=10;fontColor=#82B366;" vertex="1" parent="cl">
-      <mxGeometry x="25" y="372" width="525" height="104" as="geometry"/>
+      <mxGeometry x="25" y="440" width="525" height="104" as="geometry"/>
     </mxCell>
     <mxCell id="alloy" value="Alloy&#10;читає stdout" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="nlog">
       <mxGeometry x="18" y="34" width="230" height="52" as="geometry"/>
@@ -124,12 +136,12 @@
     </mxCell>
 
     <mxCell id="nmlf" value="mlflow" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=none;strokeColor=#B85450;dashed=1;fontSize=10;fontColor=#B85450;" vertex="1" parent="cl">
-      <mxGeometry x="600" y="42" width="440" height="434" as="geometry"/>
+      <mxGeometry x="600" y="42" width="440" height="500" as="geometry"/>
     </mxCell>
-    <mxCell id="mlf" value="MLflow&#10;трекінг · Model Registry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="nmlf">
-      <mxGeometry x="20" y="38" width="400" height="60" as="geometry"/>
+    <mxCell id="mlf" value="MLflow&#10;трекінг · Model Registry&#10;@champion · @challenger · @previous" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="nmlf">
+      <mxGeometry x="20" y="38" width="400" height="72" as="geometry"/>
     </mxCell>
-    <mxCell id="minio" value="MinIO&#10;артефакти S3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#B85450;fontSize=11;" vertex="1" parent="nmlf">
+    <mxCell id="minio" value="MinIO&#10;mlflow-artifacts · datasets&#10;iris/v1 · v2 · v3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#B85450;fontSize=11;" vertex="1" parent="nmlf">
       <mxGeometry x="20" y="126" width="190" height="60" as="geometry"/>
     </mxCell>
     <mxCell id="pg" value="PostgreSQL&#10;метадані" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#B85450;fontSize=11;" vertex="1" parent="nmlf">
@@ -140,6 +152,12 @@
     </mxCell>
     <mxCell id="train" value="Job тренування · make train або пайплайн" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F4F6;strokeColor=#A0A0AE;fontSize=10;dashed=1;" vertex="1" parent="nmlf">
       <mxGeometry x="20" y="300" width="400" height="42" as="geometry"/>
+    </mxCell>
+    <mxCell id="rec" value="dataset-reconciler · Тема 11&#10;стежить за datasets/iris/v2.csv" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C2185B;fontSize=11;" vertex="1" parent="nmlf">
+      <mxGeometry x="20" y="358" width="400" height="52" as="geometry"/>
+    </mxCell>
+    <mxCell id="recn" value="level-triggered: подія лише БУДИТЬ цикл.&#10;Рішення ухвалює порівняння відбитків, а не подія." style="text;html=1;fontSize=9;align=left;verticalAlign=middle;fontColor=#A03A63;" vertex="1" parent="nmlf">
+      <mxGeometry x="20" y="416" width="400" height="30" as="geometry"/>
     </mxCell>
 
     <mxCell id="sfn" value="Step Functions · mds06-train" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=none;strokeColor=#00838F;strokeWidth=2;fontSize=12;fontStyle=1;fontColor=#00838F;" vertex="1" parent="aws">
@@ -188,6 +206,25 @@
     </mxCell>
     <mxCell id="e33" style="strokeColor=#D79B00;dashed=1;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="s6" target="cw">
       <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="e40" value="подія put *.csv" style="strokeColor=#C2185B;strokeWidth=3;fontSize=10;fontColor=#C2185B;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="minio" target="rec">
+      <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="936" y="426"/><mxPoint x="936" y="654"/></Array></mxGeometry>
+    </mxCell>
+    <mxCell id="e41" value="repository_dispatch" style="strokeColor=#C2185B;strokeWidth=3;fontSize=10;fontColor=#C2185B;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="rec" target="gha">
+      <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1150" y="1046"/><mxPoint x="252" y="1046"/><mxPoint x="252" y="320"/></Array></mxGeometry>
+    </mxCell>
+    <mxCell id="e42" value="чи тренували на цих даних?" style="strokeColor=#C2185B;fontSize=9;dashed=1;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="rec" target="mlf">
+      <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1362" y="654"/><mxPoint x="1362" y="344"/></Array></mxGeometry>
+    </mxCell>
+    <mxCell id="e43" value="variant: blue" style="strokeColor=#6C8EBF;strokeWidth=2;fontSize=9;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="svc" target="mlm">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e44" value="один рядок у Git" style="strokeColor=#82B366;fontSize=9;dashed=1;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="svc" target="green">
+      <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="600" y="450"/><mxPoint x="600" y="555"/></Array></mxGeometry>
+    </mxCell>
+    <mxCell id="e45" value="тінь · SHADOW_URL" style="strokeColor=#82B366;fontSize=9;dashed=1;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="lg" target="green">
+      <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="362" y="613"/><mxPoint x="362" y="555"/></Array></mxGeometry>
     </mxCell>
 
     <mxCell id="e1" value="push" style="strokeColor=#8C8C9A;fontSize=10;endArrow=block;edgeStyle=orthogonalEdgeStyle;rounded=0;libavoidRouting=1;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="dev" target="gh">
