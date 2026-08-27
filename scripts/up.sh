@@ -100,6 +100,15 @@ kubectl create secret generic dataset-webhook -n mlflow \
   --from-literal=WEBHOOK_TOKEN=mds06-webhook \
   --from-literal=GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# 🔴 Перезапуск ОБОВʼЯЗКОВИЙ, а не косметика. Крок 3 чекає, поки всі Application
+# стануть Healthy, тож узгоджувач стартує РАНІШЕ за цей секрет. envFrom читається
+# один раз при старті пода: секрет, створений після, до нього не потрапить ніколи.
+# Через optional: true под навіть не падає — він тихо працює в режимі would_trigger,
+# а рядок нижче рапортує «✅ токен заданий». Секрет справді створено; до пода він
+# не дійшов. Зміряно: подія в MinIO логувалась як would_trigger при живому секреті.
+kubectl -n mlflow rollout restart deploy/dataset-reconciler >/dev/null 2>&1 \
+  && kubectl -n mlflow rollout status deploy/dataset-reconciler --timeout=90s >/dev/null 2>&1
+
 [[ -n "${GITHUB_TOKEN:-}" ]] \
   && echo "  ✅ токен GitHub заданий — подія в сховищі запускатиме пайплайн" \
   || echo "  ⚠️  GITHUB_TOKEN не заданий: приймач лише логуватиме подію (would_trigger)"
