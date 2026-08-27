@@ -660,7 +660,7 @@ make clean          # зупинити всі тунелі
 |---|---|---|
 | MLflow | http://localhost:5001 | не потрібен |
 | MinIO console | http://localhost:9001 | `minioadmin` / `MINIO_PW` з `~/.mlflow-demo-credentials` |
-| Grafana | http://localhost:3000 | admin / admin |
+| Grafana | http://localhost:3001 | admin / admin |
 | Prometheus | http://localhost:9090 | не потрібен |
 | ArgoCD | https://localhost:8080 (⚠️ https) | admin / `argocd-initial-admin-secret` |
 | Дріфт-експортер | http://localhost:9101/metrics | сирі метрики |

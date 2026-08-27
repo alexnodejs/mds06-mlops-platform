@@ -9,6 +9,13 @@
 set -uo pipefail
 export AWS_PROFILE="${AWS_PROFILE:-goit-aws-mds}"
 PWFILE="$HOME/.mlflow-demo-credentials"
+# Порт Grafana виніс у змінну: 3000 — найпопулярніший порт для локальної
+# розробки (Node, Next.js, Vite), і зайнятий він буває частіше, ніж вільний.
+# Гірше, що конфлікт ТИХИЙ: kubectl слухає 127.0.0.1:3000, чужий процес — [::1]:3000,
+# обидва стартують без помилки, а браузер на localhost віддає перевагу IPv6 і
+# показує чужий застосунок замість Grafana.
+#   GRAFANA_PORT=3005 make ports
+GRAFANA_PORT="${GRAFANA_PORT:-3001}"
 
 if [[ "${1:-}" == "--stop" ]]; then
   pkill -f "kubectl port-forward" 2>/dev/null && echo "✅ тунелі зупинено" || echo "нічого не працювало"
@@ -30,7 +37,7 @@ if [[ "${1:-}" != "--table" ]]; then
   pf mlflow     mlflow                                5001 80    "MLflow"
   pf mlflow     minio-console                         9001 9001  "MinIO"
   pf mlflow     drift-exporter                        9101 9100  "Drift"
-  pf monitoring monitoring-grafana                    3000 80    "Grafana"
+  pf monitoring monitoring-grafana         "$GRAFANA_PORT" 80    "Grafana"
   pf monitoring monitoring-kube-prometheus-prometheus 9090 9090  "Prometheus"
   pf argocd     argocd-server                         8080 443   "ArgoCD"
   pf ml-demo    ml-model                              8000 80    "ML-модель"
@@ -63,7 +70,7 @@ cat <<EOF
 
   $(st 9001 /) MinIO         http://localhost:9001              minioadmin / $MINIO_PW
 
-  $(st 3000 /api/health) Grafana       http://localhost:3000              admin / admin
+  $(st "$GRAFANA_PORT" /api/health) Grafana       http://localhost:$GRAFANA_PORT              admin / admin
       Дашборди: «ML-модель — моніторинг» і «Якість моделі — дріфт»
 
   $(st 9090 /-/ready) Prometheus    http://localhost:9090              логін не потрібен

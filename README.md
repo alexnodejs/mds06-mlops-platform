@@ -85,7 +85,7 @@ make pipeline-up     # Тема 10:  Step Functions + Lambda + OIDC, ~1 хв
 | Сервіс | Адреса | Логін |
 |---|---|---|
 | MLflow | http://localhost:5001 | не потрібен |
-| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Grafana | http://localhost:3001 | `admin` / `admin` |
 | ArgoCD | https://localhost:8080 (саме https) | `admin` / друкує `make ports` |
 | Модель | http://localhost:8000 | `POST /predict` |
 | MinIO | http://localhost:9001 | `minioadmin` / друкує `make ports` |

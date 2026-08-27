@@ -240,7 +240,7 @@ make clean              # зупинити всі тунелі
 
 | Сервіс | Порт | Логін | Тема |
 |---|---|---|---|
-| Grafana | http://localhost:3000 | `admin` / `admin` | 8 |
+| Grafana | http://localhost:3001 | `admin` / `admin` | 8 |
 | Prometheus | http://localhost:9090 | не потрібен | 8 |
 | ML-модель | http://localhost:8000 | `POST /predict` | 8 |
 | Loki | http://localhost:3100 | лише API, UI — у Grafana | 8 |
